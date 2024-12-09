@@ -4,7 +4,6 @@
 # https://stackoverflow.com/questions/748675/finding-duplicate-files-and-removing-them
 
 #!/usr/bin/env python
-from time import sleep
 import sys
 import os
 import hashlib
