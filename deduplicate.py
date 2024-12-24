@@ -11,9 +11,6 @@ HASH_STORAGE_DIR = "hash_storage"
 if not os.path.exists(HASH_STORAGE_DIR):
     os.makedirs(HASH_STORAGE_DIR)
 
-
-
-
 class HashAnalysis:
     """Handles file hashing and analysis for a specific directory."""
 
@@ -153,6 +150,7 @@ class HashAnalysis:
 
 class DupeFile:
     def __init__(self, file, hash='', size=0):
+        self.parent_dd = None
         self.path = file
         path_parts = file.split('/')[:-1]
         self.parent = '/'.join(path_parts)
@@ -221,16 +219,28 @@ class DupeDir(DupeFile):
              'count': self.count_total}
         return f"{self.path}: {x}"
 
+    def is_empty(self):
+        return (self.has_no_extras() and
+                self.has_no_dupedirs() and
+                self.has_no_dupefiles())
 
     def has_no_extras(self):
         return (not(self.has_nondupe_files()) and
                 not(self.has_nondupe_subdirs()))
 
     def has_no_dupedirs(self):
-        return len(self.subdir_dupes) == 0
+        if len(self.subdir_dupes) > 0:
+            for sd in self.subdir_dupes:
+                if not sd.is_deleted:
+                    return False
+        return True
 
     def has_no_dupefiles(self):
-        return len(self.file_dupes) == 0
+        if len(self.file_dupes) > 0:
+            for fd in self.file_dupes:
+                if not fd.is_deleted:
+                    return False
+        return True
 
     def has_nondupe_files(self):
         return len(self.file_uniqs) > 0
@@ -323,10 +333,12 @@ class DupeDir(DupeFile):
             return extra_d
         raise Exception('invalid strategy')
 
-    def delete(self, strategy):
-        super().delete(strategy)
+    def check_delete(self):
+        if self.is_empty():
+            self.is_deleted = True
+        return self.is_deleted
 
-    def keep(self, accum, strategy):
+    def keep(self, accum, delete_lookup, strategy):
         # do directory deletes
         keeps = set()
         deletes = set()
@@ -335,13 +347,15 @@ class DupeDir(DupeFile):
             ks, ds = dupe.keep()
             keeps.update(ks)
             deletes.update(ds)
+            for d in ds:
+                # print(d.path)
+                delete_lookup[d.path] = self.path
         if len(keeps) > 0:
             accum[self.path] = keeps, deletes
         # move on to the next directory
         d = DupeDir.calc_max(self.dupe_children, strategy)
         if d:
-            d.keep(accum, strategy)
-
+            d.keep(accum, delete_lookup, strategy)
 
 
 class DirectoryComparator:
@@ -427,89 +441,54 @@ class DirectoryComparator:
 
         return hashes_full
 
-    def analyze_directories(self, hashes_full):
-        dirs = {}
-        #     def group_files_by_directory(self, file_list):
-        # """Groups files by their parent directory."""
-        # dir_map = defaultdict(list)
-        # for file in file_list:
-        #     directory = os.path.dirname(file)
-        #     dir_map[directory].append(file)
-        # return dir_map
+    @staticmethod
+    def readable_size(size):
+        # Define the units
+        units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
 
+        # Initialize the index for units
+        unit_index = 0
 
-    def get_parent_dir(self, file):
-        return '/'.join(file.split('/')[:-1])
+        # Loop to find the appropriate unit
+        while size >= 1024 and unit_index < len(units) - 1:
+            size /= 1024.0
+            unit_index += 1
 
-    def is_full_dir_of_dupes(self, dupe_files, potential_dupe_dir, file):
-        """Checks to make sure all files in a dir are duplicates, however, it does not check each subdir.  it only aggregates the subdirs.  subdirs must be checked separately. """
-        dir_file_contents = []
-        ret_dirs = []
-        dir_size = 0
-        # print(f"potential_dupe_dir: {potential_dupe_dir} for {file}")
-        for dirpath, dirs, filenames in os.walk(potential_dupe_dir):
-            for filename in filenames:
-                full_path = os.path.realpath(os.path.join(dirpath, filename))
-                if full_path not in dupe_files:
-                    return (None, None, None, None)
-                dir_file_contents.append(full_path)
-                dir_size += self.size_lookup[full_path]
-            for dir in dirs:
-                full_path = os.path.realpath(os.path.join(dirpath, dir))
-                ret_dirs.append(full_path)
-            # don't recurse through sub directories
-            break
-        return (potential_dupe_dir, ret_dirs, dir_file_contents, dir_size)
+        # Return the formatted string
+        return f"{size:.2f} {units[unit_index]}"
 
-    def dirs_full_of_dupes(self, dupe_files, dupe_file_depth):
-                # capture a new hash to store our dupe tree
-        dupe_dirs = defaultdict(dict)
-        dupe_dir_depth = defaultdict(list)
-
-        # iterate through each through starting with deepest dir
-        ordered_depth_keys = sorted(dupe_file_depth)
-        revkeys = ordered_depth_keys.copy()
-        revkeys.reverse()
-        for key in revkeys:
-            for file in dupe_file_depth[key]:
-                potential_dupe_dir = self.get_parent_dir(file)
-                # avoid doing reanalysis
-                if potential_dupe_dir not in dupe_dirs:
-                    dupe_dir, subdirs, dupe_contents, size = self.is_full_dir_of_dupes(dupe_files,
-                                                                        potential_dupe_dir,
-                                                                        file)
-                    if dupe_dir:
-                        dupe_dirs[dupe_dir] = {'subdirs': subdirs,
-                                               'files': dupe_contents,
-                                               'count': len(dupe_contents),
-                                               'size': size}
-                        dupe_dir_depth[len(subdirs)].append(dupe_dir)
-                        # print(f"found dupe dir: {dupe_dir}")
-        # pprint(dupe_dirs)
-        # pprint(dupe_dir_depth)
-        return dupe_dirs, dupe_dir_depth
 
     def execute(self, can_delete=False):
-        processed_files = {}
-        dupe_files = self.analyze()
-        for dupe_file, dupe_file_list in dupe_files.items():
-            if dupe_file not in processed_files:
-                print(f"keeping: {dupe_file}")
-                for delete in dupe_file_list:
-                    if dupe_file != delete:
-                        print(f"\tdeleting: {delete}")
-                        processed_files[delete] = dupe_file
-                        if can_delete:
-                            try:
-                                os.remove(delete)
-                            except FileNotFoundError:
-                                print(f"error: FNF {delete}")
+        final_dirs = self.analyze()
+
+        sizes = {}
+        # output the directories
+        ordered_keys = sorted(final_dirs)
+        for dpath in ordered_keys:
+           print(f"Keep: {dpath}")
+           keeps, deletes = final_dirs[dpath]
+           for k in keeps:
+               print(f"\t{k.path}")
+           print(f"Deleting:")
+           size = 0
+           for d in deletes:
+               print(f"\t{d.path}")
+               size += d.size
+               if can_delete:
+                   try:
+                       os.remove(delete)
+                   except FileNotFoundError:
+                       print(f"error: FNF {delete}")
+           sizes[dpath] = size
+        for dpath, size in sizes.items():
+            print(f"Saved: {self.readable_size(size)} by deleting duplicates of {dpath}")
+
 
     def delete(self):
         self.execute(can_delete=True)
 
     def compare(self):
-        self.execute()
+        self.execute(can_delete=False)
 
     def analyze(self):
         """Compare the two directories for duplicate files."""
@@ -584,161 +563,27 @@ class DirectoryComparator:
         strategy = 'count'
         d = DupeDir.calc_max(start_list, strategy)
         final_dirs = {}
-        d.keep(final_dirs, strategy)
+        delete_lookup = {}
+        d.keep(final_dirs, delete_lookup, strategy)
 
-        # output the directories
-        ordered_keys = sorted(final_dirs)
-        for dpath in ordered_keys:
-           print(f"Keep: {dpath}")
-           keeps, deletes = final_dirs[dpath]
-           for k in keeps:
-               print(f"\t{k.path}")
-           print(f"Deleting:")
-           for d in deletes:
-               print(f"\t{d.path}")
+        # clean up dirs that are empty
+        for key in rev_ordered_keys:
+            for dd in dirs_w_dupes_by_depth[key]:
+                if dd.check_delete():
+                    for d in dd.file_dupes:
+                        kept = delete_lookup[d.path]
+                        keeps, deletes = final_dirs[kept]
+                        if d in deletes:
+                            deletes.remove(d)
+                            deletes.add(dd)
+                    # for sd in dd.subdir_dupes:
+                    #     kept = delete_lookup[sd.path]
+                    #     keeps, deletes = final_dirs[kept]
+                    #     if sd in deletes:
+                    #         deletes.remove(sd)
+                    #         deletes.add(dd)
 
-        return {}
-        dupe_dirs, dupe_dir_depth = self.dirs_full_of_dupes(dupe_files, dupe_file_depth)
-
-        pprint(dupe_dir_depth)
-        # find which validated dirs are dupes of one another
-        processed_dirs = []
-        true_dupe_dirs = defaultdict(list)
-        ordered_dir_depth = sorted(dupe_dir_depth)
-        for depth in ordered_dir_depth:
-            for dir in dupe_dir_depth[depth]:
-                if dir in processed_dirs:
-                    continue
-                # skip dirs that have subdirs that aren't full of dupes
-                should_skip = False
-                for sd in dupe_dirs[dir]['subdirs']:
-                    if sd not in dupe_dirs:
-                        should_skip = True
-                        break
-                test_filelist = dupe_dirs[dir]['files']
-                if should_skip or not test_filelist:
-                    processed_dirs.append(dir)
-                    break
-                # valid dir, find it's true dupes
-                for child_file in dupe_files[test_filelist[0]]:
-                    potdir = self.get_parent_dir(child_file)
-                    # print(potdir)
-                    if (dir != potdir and potdir in dupe_dirs and
-                        dupe_dirs[potdir]['size'] == dupe_dirs[dir]['size'] and
-                        dupe_dirs[potdir]['count'] == dupe_dirs[dir]['count']):
-                        true_dupe_dirs[dir].append(potdir)
-                    processed_dirs.append(potdir)
-                processed_dirs.append(dir)
-
-        pprint(true_dupe_dirs)
-
-        # need to parse through dupe
-        #  retain the files in the same dir
-        #  but anchored by the largest dirs
-
-        # so, first find occurrences by directory
-
-        # processed_files = {}
-        # occs = defaultdict((0, list))
-        # for f, ds in dupe_files.items():
-        #     if f in processed_files:
-        #         continue
-        #     parent = self.get_parent_dir(f)
-        #     if parent in true_dupe_dirs:
-
-        # categorized = defaultdict(list)
-
-
-
-        dupe_files.update(true_dupe_dirs)
-                        # # clean up dupe files dict
-                        # for f in dupe_dirs[potdir]['files']:
-                        #     dupe_files.pop(f)
-                        # for f in dupe_dirs[dir]['files']:
-                        #     dupe_files.pop(f)
-
-
-
-        # safe_dir = defaultdict(list)
-        # # now that we have full dupe directories of files
-        # # we need to check to make sure that nested directories are safe to delete
-        # for parent, contents in dupe_dirs.items():
-        #     dirs, files, file_count, file_size = contents
-        #     for dir in dirs:
-        #         if dir not in dupe_dirs:
-        #             break
-        #     safe_dir[parent] = contents
-
-        # pprint(safe_dir)
-
-        # create a dict of dir and its duplicates
-        # dupe_dirs = defaultdict(list)
-
-        # check each duplicate file starting at the highest level
-        #  check to see if the current file's directory is duplicate
-        #    with the directories of the duplicates
-        #    if duplicate directory is also duplicate
-        #    check the subdirs and ensure they are also fully duplicate
-        #    to choose which dir to keep, it would be the highest file count
-
-        # all files that we have already processed (and can ignore)
-        # value will resolve to the file that is kept
-        # processed_dupes = {}
-
-        # for key in ordered_depth_keys:
-        #     # start at root directories
-        #     for file in dupe_file_depth[key]:
-        #         # skip files we've processed
-        #         if file in processed_dupes:
-        #             continue
-        #         # check to see if this is part of dir of dupes
-        #         parent = self.get_parent_dir(file)
-        #         # skip dirs we've processed
-        #         if parent in processed_dupes:
-        #             continue
-
-        #         # this directory has at least one duplicate for all files.
-        #         if parent in dupe_dirs:
-        #             # mark all files as processed
-        #             for dir_file in safe_dir[parent]:
-        #                 process_dupes[dir_file] = file
-        #         # go through the duplicates of this file
-        #         for dupe in dupe_files[file]:
-        #             # skip files we've processed
-        #             if dupe in processed_dupes:
-        #                 continue
-        #             # check to see if this is part of dir of dupes
-        #             parent = self.get_parent_dir(dupe)
-        #             if parent in safe_dir:
-        #                 # check
-        #                 processed_dupes[dupe]
-
-
-        # list out those files that don't have directories
-
-                    # file_size = os.path.getsize(file)
-                    # duplicate_count += 1
-                    # file_size_mb = int(file_size) / (1024 * 1024)
-                    # total_dupe_size_mb += file_size_mb
-                    # if self.debug:
-                    #     print(f"Duplicate:{file} ({file_size_mb:.2f} MB)")
-        # if duplicate_count == 0:
-        #     print("No duplicates found.")
-        #     return
-
-        # print(f"Total duplicate size: {total_dupe_size_mb:.2f} MB")
-        # print(f"Total duplicates found: {duplicate_count}")
-
-        # build dictionary of duplicate files by path
-        # start with the leaf files (longest paths)
-        ## examine each duplicate and add to dict based on path depth
-        # see if they encompass a full directory
-        ## for the highest depth file, ls the directory and check that each of the other files exists in the hash
-        ### check the parent directory for duplicate files
-        # check the entire directory against any of the files they are duplicate with
-        return dupe_files
-
-
+        return final_dirs
 
 
 if __name__ == "__main__":
