@@ -1,26 +1,66 @@
 #!/usr/bin/env python
 import os
+import shutil
 import json
 import hashlib
 import argparse
 from collections import defaultdict
 from pprint import pprint
 
-HASH_STORAGE_DIR = "hash_storage"
+class FileUtil:
+    @staticmethod
+    def fullpath(filename):
+        return os.path.abspath(filename)
 
-if not os.path.exists(HASH_STORAGE_DIR):
-    os.makedirs(HASH_STORAGE_DIR)
+    @staticmethod
+    def join(path, filename):
+        return os.path.abspath(os.path.join(path, filename))
+
+    @staticmethod
+    def parent(path):
+        return os.path.dirname(path)
+
+    @staticmethod
+    def splitpath(path):
+        return path.split(os.sep)
+
+    @staticmethod
+    def joinpath(parts):
+        return os.sep.join(parts)
+
+    @staticmethod
+    def create_dir(path):
+        if not os.path.exists(path):
+            os.makedirs(path)
+
+    @staticmethod
+    def delete(path):
+       try:
+           os.remove(path)
+       except IsADirectoryError:
+           # maybe this is a directory
+           shutil.rmtree(path)
+       except FileNotFoundError:
+           raise Exception(f"Delete target doesn't exist: {path}")
+
+    @staticmethod
+    def size(path):
+        return os.path.getsize(path)
+
 
 class HashAnalysis:
     """Handles file hashing and analysis for a specific directory."""
 
-    def __init__(self, directory, debug=False):
+    def __init__(self, directory, debug=False, storage='dd_analysis'):
         if directory:
-            self.directory = os.path.abspath(directory)
-            self.hash_file = os.path.join(HASH_STORAGE_DIR,
-                                          f"{os.path.basename(self.directory)}.json")
+            self.directory = FileUtil.fullpath(directory)
+            FileUtil.create_dir(storage)
+            parts = FileUtil.splitpath(self.directory)
+            hash_file_name = '-'.join(parts) + '.json'
+            self.hash_file = FileUtil.join(storage, hash_file_name)
         else:
             self.directory = 'compare'
+
         self.hashes_by_size = defaultdict(list)
         self.hashes_on_1k = defaultdict(list)
         self.hashes_full = defaultdict(list)
@@ -93,7 +133,8 @@ class HashAnalysis:
 
     def delete_hashes(self):
         """Delete hashes for this directory."""
-        os.remove(self.hash_file)
+
+        FileUtil.delete(self.hash_file)
         if self.debug:
             print(f"Deleted {self.hash_file} for {self.directory} hashes.")
 
@@ -119,9 +160,9 @@ class HashAnalysis:
         print(f"Analyzing directory: {self.directory}")
         for dirpath, _, filenames in os.walk(self.directory):
             for filename in filenames:
-                full_path = os.path.realpath(os.path.join(dirpath, filename))
+                full_path = FileUtil.join(dirpath, filename)
                 try:
-                    file_size = os.path.getsize(full_path)
+                    file_size = FileUtil.size(full_path)
                     self.hashes_by_size[file_size].append(full_path)
                     self.rev_hashes_by_size[full_path] = file_size
                 except OSError:
@@ -152,8 +193,8 @@ class DupeFile:
     def __init__(self, file, hash='', size=0):
         self.parent_dd = None
         self.path = file
-        path_parts = file.split('/')[:-1]
-        self.parent = '/'.join(path_parts)
+        self.parent = FileUtil.parent(file)
+        path_parts = FileUtil.splitpath(file)
         self.depth = len(path_parts)
         self.hash = hash
         self.size = size
@@ -252,7 +293,7 @@ class DupeDir(DupeFile):
         all_dupedirs_are_full = False
         for dirpath, dirs, filenames in os.walk(self.path):
             for filename in filenames:
-                full_path = os.path.realpath(os.path.join(dirpath, filename))
+                full_path = FileUtil.join(dirpath, filename)
                 if full_path in dupe_files:
                     df = dupe_files[full_path]
                     self.file_dupes.add(df)
@@ -265,7 +306,7 @@ class DupeDir(DupeFile):
             self.size_total += self.size
             self.extra_total += self.extra
             for dir in dirs:
-                full_path = os.path.realpath(os.path.join(dirpath, dir))
+                full_path = FileUtil.join(dirpath, dir)
                 if full_path in dupe_dirs:
                     dd = dupe_dirs[full_path]
                     self.subdir_dupes.add(dd)
@@ -315,30 +356,24 @@ class DupeDir(DupeFile):
             prev_dd = dd
 
 
-    def calc_max(dupedir_list, strategy):
-        m_count = m_size =  m_extra = -1
-        count_d = size_d = extra_d = None
-        for d in dupedir_list:
-            if d.count_total > m_count:
-                count_d = d
-            if d.size_total > m_size:
-                size_d = d
-            if d.extra_total > m_extra:
-                extra_d = d
-        if strategy == 'count':
-            return count_d
-        if strategy == 'size':
-            return size_d
-        if strategy == 'extra':
-            return extra_d
-        raise Exception('invalid strategy')
+    def calc_max(dupedir_list):
+        if len(dupedir_list) > 0:
+            sorted_arr = sorted(dupedir_list,
+                                key=lambda d: (
+                                    d.count_total,
+                                    d.extra_total,
+                                    d.size_total),
+                                reverse=True)
+            return sorted_arr[0]
+        else:
+            return None
 
     def check_delete(self):
         if self.is_empty():
             self.is_deleted = True
         return self.is_deleted
 
-    def keep(self, accum, delete_lookup, strategy):
+    def keep(self, accum, delete_lookup):
         # do directory deletes
         keeps = set()
         deletes = set()
@@ -353,9 +388,9 @@ class DupeDir(DupeFile):
         if len(keeps) > 0:
             accum[self.path] = keeps, deletes
         # move on to the next directory
-        d = DupeDir.calc_max(self.dupe_children, strategy)
+        d = DupeDir.calc_max(self.dupe_children)
         if d:
-            d.keep(accum, delete_lookup, strategy)
+            d.keep(accum, delete_lookup)
 
 
 class DirectoryComparator:
@@ -461,6 +496,9 @@ class DirectoryComparator:
     def execute(self, can_delete=False):
         final_dirs = self.analyze()
 
+        if not final_dirs:
+            print("No duplicates found")
+
         sizes = {}
         # output the directories
         ordered_keys = sorted(final_dirs)
@@ -475,10 +513,7 @@ class DirectoryComparator:
                print(f"\t{d.path}")
                size += d.size
                if can_delete:
-                   try:
-                       os.remove(delete)
-                   except FileNotFoundError:
-                       print(f"error: FNF {delete}")
+                   FileUtil.delete(d.path)
            sizes[dpath] = size
         for dpath, size in sizes.items():
             print(f"Saved: {self.readable_size(size)} by deleting duplicates of {dpath}")
@@ -502,13 +537,15 @@ class DirectoryComparator:
 
         # merge the two saved analyses
         hashes_full = self.merge_analyses()
+        # pprint(hashes_full)
+        if not hashes_full:
+            return {}
 
         # loop through the duplicates by hash.
         # strip out non-duplicates.
         # lay the base of dupedir and dupefile objects.
-
-        parent1 = '/'.join(self.analysis1.directory.split('/')[:-1])
-        parent2 = '/'.join(self.analysis2.directory.split('/')[:-1])
+        parent1 = FileUtil.parent(self.analysis1.directory)
+        parent2 = FileUtil.parent(self.analysis2.directory)
         stop_dirs = [parent1, parent2]
 
         # dupefiles[path] = DupeFile(path)
@@ -560,11 +597,11 @@ class DirectoryComparator:
         # determine highest directory of each dir family of dupes
         key = next(iter(ordered_keys))
         start_list = dirs_w_dupes_by_depth[key]
-        strategy = 'count'
-        d = DupeDir.calc_max(start_list, strategy)
+        d = DupeDir.calc_max(start_list)
+        # print(d)
         final_dirs = {}
         delete_lookup = {}
-        d.keep(final_dirs, delete_lookup, strategy)
+        d.keep(final_dirs, delete_lookup)
 
         # clean up dirs that are empty
         for key in rev_ordered_keys:
