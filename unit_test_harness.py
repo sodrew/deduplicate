@@ -260,6 +260,32 @@ class DuplicateDeletionTest(unittest.TestCase):
             'folder1/child2/file3',
             ])
 
+    def test_nested_deep(self):
+        input = [
+            'folder1/file1',
+            'folder1/file2',
+            'folder1/child1/file1',
+            'folder1/child1/file2',
+            'folder1/child2/file1',
+            'folder1/child2/file2',
+            'folder1/child2/grand1/file1',
+            'folder1/child2/grand1/file2',
+            'folder1/child2/grand1/greatgrand1/file1',
+            'folder1/child2/grand1/greatgrand1/file2',
+            'folder2/file1',
+            'folder2/file2',
+            'folder2/child1/file1',
+            'folder2/child2/file2',
+            'folder2/child2/grand1/greatgrand1/file2',
+            ]
+
+        self.execute(input)
+
+        self.validate_output([
+            'folder1/file1',
+            'folder1/file2',
+            ])
+
 
 if __name__ == "__main__":
     unittest.main()
