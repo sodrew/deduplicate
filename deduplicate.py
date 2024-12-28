@@ -64,6 +64,7 @@ class HashAnalysis:
         self.hashes_by_size = defaultdict(list)
         self.hashes_on_1k = defaultdict(list)
         self.hashes_full = defaultdict(list)
+        self.empty_dirs = []
         self.rev_hashes_by_size = {}
         self.rev_hashes_on_1k = {}
         self.rev_hashes_full = {}
@@ -111,6 +112,7 @@ class HashAnalysis:
             self.rev_hashes_on_1k.update(data.get('rev_hashes_on_1k', {}))
             self.hashes_full.update(data.get('hashes_full', {}))
             self.rev_hashes_full.update(data.get('rev_hashes_full', {}))
+            self.empty_dirs = data.get('empty_dirs', [])
             self.loaded = True
             if self.debug:
                 print(f"Loaded hashes for {self.directory} from {self.hash_file}.")
@@ -127,6 +129,7 @@ class HashAnalysis:
                 'rev_hashes_on_1k': self.rev_hashes_on_1k,
                 'hashes_full': self.hashes_full,
                 'rev_hashes_full': self.rev_hashes_full,
+                'empty_dirs': self.empty_dirs,
             }, f, indent=2)
         if self.debug:
             print(f"Hashes for {self.directory} saved to {self.hash_file}.")
@@ -158,15 +161,22 @@ class HashAnalysis:
             return
 
         print(f"Analyzing directory: {self.directory}")
-        for dirpath, _, filenames in os.walk(self.directory):
+        for dirpath, dirs, filenames in os.walk(self.directory):
             for filename in filenames:
                 full_path = FileUtil.join(dirpath, filename)
                 try:
                     file_size = FileUtil.size(full_path)
+                except OSError:
+                    print(f"Error: unable to get size for: {full_path}")
+                    file_size = 0
+                finally:
                     self.hashes_by_size[file_size].append(full_path)
                     self.rev_hashes_by_size[full_path] = file_size
-                except OSError:
-                    continue
+            # find any empty dirs
+            if len(dirs) == 0 and len(filenames) == 0:
+                # print('found empty', dirpath)
+                self.empty_dirs.append(dirpath)
+
 
         for file_size, files in self.hashes_by_size.items():
             if len(files) < 2:
@@ -604,6 +614,18 @@ class DirectoryComparator:
             # set the duplicates
             for df in obj_list:
                 df.set_dupes(obj_list)
+
+        # add in empty dirs
+        for dir in self.analysis1.empty_dirs:
+            dd = DupeDir(dir, None)
+            dirs_w_dupes[dir] = dd
+            dirs_w_dupes_by_depth[dd.depth].append(dd)
+        for dir in self.analysis2.empty_dirs:
+            dd = DupeDir(dir, None)
+            dirs_w_dupes[dir] = dd
+            dirs_w_dupes_by_depth[dd.depth].append(dd)
+
+
         # determine if dupe dirs are completely duplicate
         #  check against filesystem for other files
         #  check to see if subdirs are complete dupes
