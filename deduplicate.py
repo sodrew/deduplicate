@@ -191,7 +191,7 @@ class HashAnalysis:
 
 class DupeFile:
     def __init__(self, file, hash='', size=0):
-        self.parent_dd = None
+        # self.parent_dd = None
         self.path = file
         self.parent = FileUtil.parent(file)
         path_parts = FileUtil.splitpath(file)
@@ -228,8 +228,9 @@ class DupeFile:
         return keeps, deletes
 
     def __repr__(self):
-        from pprint import pformat
-        return f"\n DupeFile({pformat(vars(self), indent=2, width=1)})"
+        # from pprint import pformat
+        # return f"\n DupeFile({pformat(vars(self), indent=2, width=1)})"
+        return f"{self.path}"
 
 class DupeDir(DupeFile):
     def __init__(self, *args, **kwargs):
@@ -362,7 +363,10 @@ class DupeDir(DupeFile):
                                 key=lambda d: (
                                     d.count_total,
                                     d.extra_total,
-                                    d.size_total),
+                                    d.size_total,
+                                    # descending
+                                    d.parent[::-1],
+                                ),
                                 reverse=True)
             return sorted_arr[0]
         else:
@@ -494,29 +498,35 @@ class DirectoryComparator:
 
 
     def execute(self, can_delete=False):
-        final_dirs = self.analyze()
+        try:
+            final_dirs = self.analyze()
 
-        if not final_dirs:
-            print("No duplicates found")
+            if not final_dirs:
+                print("No duplicates found")
 
-        sizes = {}
-        # output the directories
-        ordered_keys = sorted(final_dirs)
-        for dpath in ordered_keys:
-           print(f"Keep: {dpath}")
-           keeps, deletes = final_dirs[dpath]
-           for k in keeps:
-               print(f"\t{k.path}")
-           print(f"Deleting:")
-           size = 0
-           for d in deletes:
-               print(f"\t{d.path}")
-               size += d.size
-               if can_delete:
-                   FileUtil.delete(d.path)
-           sizes[dpath] = size
-        for dpath, size in sizes.items():
-            print(f"Saved: {self.readable_size(size)} by deleting duplicates of {dpath}")
+            sizes = {}
+            # output the directories
+            ordered_keys = sorted(final_dirs)
+            for dpath in ordered_keys:
+               print(f"Keep: {dpath}")
+               keeps, deletes = final_dirs[dpath]
+               for k in keeps:
+                   print(f"\t{k.path}")
+               print(f"Deleting:")
+               size = 0
+               for d in deletes:
+                   print(f"\t{d.path}")
+                   size += d.size
+                   if can_delete:
+                       FileUtil.delete(d.path)
+               sizes[dpath] = size
+            for dpath, size in sizes.items():
+                print(f"Saved: {self.readable_size(size)} by deleting duplicates of {dpath}")
+        except Exception as e:
+            print(f"Error: {e}")
+        finally:
+            if self.debug:
+                self.clean()
 
 
     def delete(self):
@@ -598,7 +608,6 @@ class DirectoryComparator:
         key = next(iter(ordered_keys))
         start_list = dirs_w_dupes_by_depth[key]
         d = DupeDir.calc_max(start_list)
-        # print(d)
         final_dirs = {}
         delete_lookup = {}
         d.keep(final_dirs, delete_lookup)
@@ -607,18 +616,20 @@ class DirectoryComparator:
         for key in rev_ordered_keys:
             for dd in dirs_w_dupes_by_depth[key]:
                 if dd.check_delete():
+                    # clean up files that are children of deleted dirs
                     for d in dd.file_dupes:
                         kept = delete_lookup[d.path]
                         keeps, deletes = final_dirs[kept]
                         if d in deletes:
                             deletes.remove(d)
                             deletes.add(dd)
-                    # for sd in dd.subdir_dupes:
-                    #     kept = delete_lookup[sd.path]
-                    #     keeps, deletes = final_dirs[kept]
-                    #     if sd in deletes:
-                    #         deletes.remove(sd)
-                    #         deletes.add(dd)
+                    # clean up subdirs that are children of deleted dirs
+                    for sd in dd.subdir_dupes:
+                        for kept, vals in final_dirs.items():
+                            keeps, deletes = vals
+                            if sd in deletes:
+                                deletes.remove(sd)
+                                deletes.add(dd)
 
         return final_dirs
 
@@ -636,21 +647,15 @@ if __name__ == "__main__":
     if args.analyze:
         analysis = HashAnalysis(args.analyze)
         analysis.analyze()
-        if args.debug:
-            comparator.clean()
 
     if args.compare:
         dir1, dir2 = args.compare
         comparator = DirectoryComparator(dir1, dir2, args.debug)
         comparator.compare()
-        if args.debug:
-            comparator.clean()
 
     if args.delete:
         dir1, dir2 = args.delete
         comparator = DirectoryComparator(dir1, dir2, args.debug)
         comparator.delete()
-        if args.debug:
-            comparator.clean()
 
 
