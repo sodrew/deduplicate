@@ -3,7 +3,7 @@ import shutil
 import subprocess
 import unittest
 from pathlib import Path
-
+import pprint
 
 class DuplicateDeletionTest(unittest.TestCase):
     script_path = "deduplicate.py"  # Replace with the actual path to your script
@@ -85,21 +85,35 @@ class DuplicateDeletionTest(unittest.TestCase):
             actual_file_dirs = set()
             actual_dirs = set()
             for root, dirs, files in os.walk(self.test_root):
+                # print('root', root)
                 for file in files:
                     fpath = os.path.join(root, file)
+                    # print('fpath', fpath)
                     with open(fpath, "r") as fp:
                         file_contents = fp.readline().strip()
                         found = os.path.join(root, file_contents)
                         actual_files.add(found)
+                        # print('file', found)
+                        # print('dir', os.path.dirname(found))
                         actual_file_dirs.add(os.path.dirname(found))
                 for dir in dirs:
                     dpath = os.path.join(root, dir)
                     actual_dirs.add(dpath)
 
+            # print('1', actual_dirs)
             actual_dirs = actual_dirs - actual_file_dirs
+            # print('2', actual_dirs)
             new_dirs = set()
             for ad in actual_dirs:
-                new_dirs.add(ad + os.sep)
+                # ignore dirs that are in path of files
+                found = False
+                for af in actual_files:
+                    if ad in af[:len(ad)]:
+                        found = True
+                        # print(ad, af)
+                        break
+                if not found:
+                    new_dirs.add(ad + os.sep)
             actual_files.update(new_dirs)
 
             diff = actual_files - output2
@@ -113,7 +127,11 @@ class DuplicateDeletionTest(unittest.TestCase):
             if len(diff2) > 0:
                 output += f"Miss:  {sorted(diff2)}\n"
             self.assertFalse(len(output) != 0,
-                             f"\nExpect:{output2_list}\n{output}"
+                             f"\nExpect:\n"
+                             f"{pprint.pformat(output2_list)}\n"
+                             f"Found:\n"
+                             f"{pprint.pformat(sorted(actual_files))}\n"
+                             f"{output}"
                              )
         except AssertionError as e:
             # Print script output only on failure
@@ -331,6 +349,96 @@ class DuplicateDeletionTest(unittest.TestCase):
             'folder1/file1',
             'folder1/file2',
             'folder1/child2/file3',
+            ])
+
+    def test_nested_deep4(self):
+        input = [
+            'folder1/file1',
+            'folder2/child1/grand1/file1',
+            'folder2/child2/grand2/file2',
+            'folder2/child3/grand2/file3',
+            ]
+
+        self.execute(input)
+
+        self.validate_output([
+            'folder2/child1/grand1/file1',
+            'folder2/child2/grand2/file2',
+            'folder2/child3/grand2/file3',
+            ])
+
+    def test_nested_deep5(self):
+        input = [
+            'folder1/child1/file1',
+            'folder1/child1/file2',
+            'folder1/child1/file3',
+            'folder2/child1/grand1/file1',
+            'folder2/child2/grand2/file2',
+            'folder2/child3/grand2/file3',
+            ]
+
+        self.execute(input)
+
+        self.validate_output([
+            'folder1/child1/file1',
+            'folder1/child1/file2',
+            'folder1/child1/file3',
+            ])
+
+    def test_separate_dupes(self):
+        input = [
+            'folder1/child1/file1',
+            'folder1/child1/file2',
+            'folder1/child1/file3',
+            'folder1/child2/file4',
+            'folder1/child2/file5',
+            'folder1/child2/file6',
+            'folder2/child2/grand1/file1',
+            'folder2/child2/grand2/file2',
+            'folder2/child2/grand3/file3',
+            'folder2/child2/grand4/file4',
+            'folder2/child2/grand5/file5',
+            'folder2/file6',
+            ]
+
+        self.execute(input)
+
+        self.validate_output([
+            'folder1/child1/file1',
+            'folder1/child1/file2',
+            'folder1/child1/file3',
+            'folder1/child2/file4',
+            'folder1/child2/file5',
+            'folder1/child2/file6',
+            ])
+
+    def test_separate_dupes2(self):
+        input = [
+            'folder1/child1/file1',
+            'folder1/child1/file2',
+            'folder1/child1/file3',
+            'folder1/child2/file4',
+            'folder1/child2/file5',
+            'folder1/child2/file6',
+            'folder2/child1/grand1/file1',
+            'folder2/child1/grand2/file2',
+            'folder2/child1/grand3/file3',
+            'folder2/child1/grand4/file4',
+            'folder2/child2/grand5/file5',
+            'folder2/file6',
+            'folder2/file7',
+            ]
+
+        self.execute(input)
+
+        self.validate_output([
+            'folder1/child1/file1',
+            'folder1/child1/file2',
+            'folder1/child1/file3',
+            'folder1/child2/file4',
+            'folder1/child2/file5',
+            'folder2/file6',
+            'folder2/file7',
             ])
 
 if __name__ == "__main__":

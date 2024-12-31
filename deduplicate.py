@@ -5,7 +5,7 @@ import json
 import hashlib
 import argparse
 from collections import defaultdict
-from pprint import pprint
+from pprint import pprint, pformat
 
 class FileUtil:
     @staticmethod
@@ -225,7 +225,7 @@ class DupeFile:
             self.is_deleted = True
         return deletes
 
-    def keep(self):
+    def keep(self, dwd):
         deletes = set()
         keeps = set()
         if not self.is_deleted:
@@ -238,7 +238,6 @@ class DupeFile:
         return keeps, deletes
 
     def __repr__(self):
-        # from pprint import pformat
         # return f"\n DupeFile({pformat(vars(self), indent=2, width=1)})"
         return f"DupeFile({self.path})"
 
@@ -263,12 +262,13 @@ class DupeDir(DupeFile):
         # self.is_root = False
 
     def __repr__(self):
-        # from pprint import pformat
         # return f"\n DupeDir({pformat(vars(self), indent=2, width=1)})"
         # return f"{self.depth}: {self.path}: {self.count_total}"
         x = {'extra': self.extra_total,
              'size': self.size_total,
-             'count': self.count_total}
+             'count': self.count_total,
+             'is_deleted': self.is_deleted,
+             }
         return f"DupeDir({self.path}: {x})"
 
     def is_empty(self):
@@ -308,7 +308,7 @@ class DupeDir(DupeFile):
                 if full_path in dupe_files:
                     df = dupe_files[full_path]
                     self.file_dupes.add(df)
-                    self.size += df.size
+                    self.size_total += df.size
                     self.count += 1
                 else:
                     self.file_uniqs.append(full_path)
@@ -347,13 +347,15 @@ class DupeDir(DupeFile):
             not(self.has_no_extras()) and
             all_dupedirs_are_full)
 
-    def fill_parents(self, dupe_dirs, stop_dirs):
+    def fill_parents(self, dupe_dirs, dwd_depth, stop_dirs):
         parent = self.parent
         prev_dd = self
         while parent not in stop_dirs:
             if parent not in dupe_dirs:
+                # print('fillp', parent)
                 dd = DupeDir(parent)
                 dupe_dirs[parent] = dd
+                dwd_depth[dd.depth].append(dd)
             else:
                 dd = dupe_dirs[parent]
 
@@ -367,48 +369,112 @@ class DupeDir(DupeFile):
             parent = dd.parent
             prev_dd = dd
 
+    @staticmethod
+    def max_overlap(str1, str2):
+        # Initialize the matrix for dynamic programming
+        dp = [[0] * (len(str2) + 1) for _ in range(len(str1) + 1)]
+        max_length = 0
+        end_index = 0
 
-    def calc_max(dupedir_list):
-        if len(dupedir_list) > 0:
-            filtered_list = [d for d in dupedir_list if not d.is_deleted]
-            sorted_arr = sorted(filtered_list,
-                                key=lambda d: (
-                                    d.count_total,
-                                    d.extra_total,
-                                    d.size_total,
-                                    # descending
-                                    d.parent[::-1],
-                                ),
-                                reverse=True)
-            return sorted_arr[0]
-        else:
+        # Fill the matrix
+        for i in range(1, len(str1) + 1):
+            for j in range(1, len(str2) + 1):
+                if str1[i - 1] == str2[j - 1]:
+                    dp[i][j] = dp[i - 1][j - 1] + 1
+                    if dp[i][j] > max_length:
+                        max_length = dp[i][j]
+                        end_index = i
+
+        # Extract the largest overlapping substring
+        largest_substring = str1[end_index - max_length:end_index]
+        return largest_substring
+
+    @staticmethod
+    def calc_max(dupedir_list, past_kept=None):
+        filtered_list = [d for d in dupedir_list if not d.is_deleted]
+        if len(filtered_list) == 0:
             return None
 
+        # pprint(past_kept)
+        # see if we match the
+        if past_kept:
+            # print('past_kept')
+            # pprint(past_kept)
+            # we need to consider past choices as an additional weight
+            weighted = defaultdict(list)
+            for fl in filtered_list:
+                count = 0
+                for pk in past_kept:
+                    # print(fl.path, pk, len(DupeDir.max_overlap(fl.path, pk)))
+                    count += len(DupeDir.max_overlap(fl.path, pk))
+
+                weighted[count].append(fl)
+            # pprint(weighted)
+            keys = sorted(weighted.keys())
+            keys.reverse()
+            # print('filtered')
+            # pprint(filtered_list)
+            filtered_list = weighted[keys[0]]
+            # print('weighted')
+            # pprint(weighted)
+
+        # use the sort approach of largest file count
+        sorted_arr = sorted(filtered_list,
+                            key=lambda d: (
+                                d.count_total,
+                                d.extra_total,
+                                d.size_total,
+                                # prefer shallower directory
+                                d.parent[::-1],
+                            ),
+                            reverse=True)
+        # print('final_max', sorted_arr[0])
+        return sorted_arr[0]
+
     def check_delete(self):
-        if self.is_empty():
+        if not self.is_deleted and self.is_empty():
             self.is_deleted = True
         return self.is_deleted
 
-    def keep(self, accum, delete_lookup, reviewed):
+    def decrement_dupes(self, df, dwd):
+        self.count -= 1
+        self.count_total -= 1
+        self.size -= df.size
+        self.check_delete()
+        if self.parent in dwd:
+            dd = dwd[self.parent]
+            dd.decrement_dupes(df, dwd)
+
+    def keep(self, accum, delete_lookup, reviewed, dwd):
         # do directory deletes
         keeps = set()
         deletes = set()
         # print('keep', self.path)
         for dupe in self.file_dupes:
-            ks, ds = dupe.keep()
+            ks, ds = dupe.keep(dwd)
             keeps.update(ks)
             deletes.update(ds)
             reviewed.update(ks)
             reviewed.update(ds)
             for d in ds:
                 # print(d.path)
+                # update who this is deleted by
                 delete_lookup[d.path] = self.path
+                # update dir counts
+                if d.parent in dwd:
+                    dd = dwd[d.parent]
+                    dd.decrement_dupes(d, dwd)
+
         if len(keeps) > 0:
             accum[self.path] = keeps, deletes
-        # move on to the next directory
-        d = DupeDir.calc_max(self.dupe_children)
-        if d:
-            d.keep(accum, delete_lookup, reviewed)
+            print('DupeDir.keep():', self.path,
+                  pformat(keeps),
+                  pformat(deletes))
+        else:
+            # move on to subdirs if empty
+            dd = DupeDir.calc_max(self.dupe_children, accum.keys())
+            if dd:
+                dd.keep(accum, delete_lookup, reviewed, dwd)
 
     def check_single_parent(self):
         # print('checking', self.path, self.parent)
@@ -523,27 +589,28 @@ class DirectoryComparator:
         return f"{size:.2f} {units[unit_index]}"
 
 
-    def execute(self, can_delete=False):
+    def execute(self, exec_delete=False):
         try:
             final_dirs = self.analyze()
 
             if not final_dirs:
                 print("No duplicates found")
 
+            print(f"-------------------------------")
             sizes = {}
             # output the directories
             ordered_keys = sorted(final_dirs)
             for dpath in ordered_keys:
-               print(f"Keep: {dpath}")
+               print(f"\nKeep dir:   {dpath}")
                keeps, deletes = final_dirs[dpath]
                for k in keeps:
-                   print(f"\t{k.path}")
-               print(f"Deleting:")
+                   print(f"  keep file:{k.path}")
+               print(f"  Deleting: ")
                size = 0
                for d in deletes:
-                   print(f"\t{d.path}")
+                   print(f"            {d.path}")
                    size += d.size
-                   if can_delete:
+                   if exec_delete:
                        FileUtil.delete(d.path)
                sizes[dpath] = size
             for dpath, size in sizes.items():
@@ -557,10 +624,10 @@ class DirectoryComparator:
 
 
     def delete(self):
-        self.execute(can_delete=True)
+        self.execute(exec_delete=True)
 
     def compare(self):
-        self.execute(can_delete=False)
+        self.execute(exec_delete=False)
 
     def analyze(self):
         """Compare the two directories for duplicate files."""
@@ -599,6 +666,7 @@ class DirectoryComparator:
         dirs_w_dupes[dd.path] = dd
         dirs_w_dupes_by_depth[dd.depth].append(dd)
 
+        # create the dupe file objects
         for hash, files in hashes_full.items():
             if len(files) < 2:
                 continue
@@ -646,29 +714,39 @@ class DirectoryComparator:
         ordered_keys = sorted(dirs_w_dupes_by_depth.keys())
         rev_ordered_keys = ordered_keys.copy()
         rev_ordered_keys.reverse()
-        # supersets = {}
-        for key in rev_ordered_keys:
-            for dd in dirs_w_dupes_by_depth[key]:
-                dd.load_fs(dupefiles, dirs_w_dupes)
-                # if dd.is_superset:
-                #     supersets[dd.path] = dd
 
         # fill in empty parent dirs to aggregate
         #  sizes and counts.
         for key in rev_ordered_keys:
             for dd in dirs_w_dupes_by_depth[key]:
-                dd.fill_parents(dirs_w_dupes, stop_dirs)
+                dd.fill_parents(dirs_w_dupes,
+                                dirs_w_dupes_by_depth,
+                                stop_dirs)
+
+        # because we may update dirs_w_dupes_by_depth in fill_parents
+        # we update the keys
+        ordered_keys = sorted(dirs_w_dupes_by_depth.keys())
+        rev_ordered_keys = ordered_keys.copy()
+        rev_ordered_keys.reverse()
+
+        for key in rev_ordered_keys:
+            for dd in dirs_w_dupes_by_depth[key]:
+                dd.load_fs(dupefiles, dirs_w_dupes)
 
         # get the highest directory level of each dir family of dupes
         key = next(iter(ordered_keys))
         start_list = dirs_w_dupes_by_depth[key]
         # determine which dir to start with
         d = DupeDir.calc_max(start_list)
+        # print('d', d)
         final_output = {}
+        # delete_lookup used by DupeDir.keep()
         delete_lookup = {}
         reviewed = set()
         # generate the first pass of dupe finding (hardest part)
-        d.keep(final_output, delete_lookup, reviewed)
+        d.keep(final_output, delete_lookup, reviewed, dirs_w_dupes)
+
+        # print('pass 1')
 
         # do more passes until dupes are all found
         all_dupes = set()
@@ -677,6 +755,7 @@ class DirectoryComparator:
 
         remaining_dupes = all_dupes - reviewed
 
+        # debug_count = 2
         while len(remaining_dupes) > 0:
             new_dwd_depth = defaultdict(list)
             for df in remaining_dupes:
@@ -686,31 +765,39 @@ class DirectoryComparator:
             if ordered_keys:
                 key = next(iter(ordered_keys))
                 start_list = new_dwd_depth[key]
-                d = DupeDir.calc_max(start_list)
-                d.keep(final_output, delete_lookup, reviewed)
+                d = DupeDir.calc_max(start_list, final_output.keys())
+                d.keep(final_output, delete_lookup, reviewed, dirs_w_dupes)
+                # print('pass ', debug_count)
                 remaining_dupes = all_dupes - reviewed
 
 
         # pprint(final_output)
         # pprint(delete_lookup)
-
         # pprint(dirs_w_dupes_by_depth)
-        # clean up dirs that are empty
+
+        # clean up dirs that are empty in the final_output
         for key in rev_ordered_keys:
             for dd in dirs_w_dupes_by_depth[key]:
-                # print('all dd', dd.path, dd.is_deleted)
-                # if dd.path == '/home/drew/desktop/deduplicate/test/folder2/child2':
-                    # print(dd.subdir_dupes, dd.file_dupes, dd.subdir_uniqs, dd.file_uniqs)
-
+                # print('o-dd', dd.path, dd.is_deleted, dd.is_empty())
+                # print('    ', dd.has_no_extras(), dd.has_nondupe_files(),
+                #       dd.has_nondupe_subdirs())
+                # pprint(dd.subdir_dupes)
+                # pprint(dd.subdir_uniqs)
                 if dd.check_delete():
-                    # print('dd', dd.path, dd.is_deleted)
+                    # print('i-dd', dd.path, dd.is_deleted)
                     # clean up files that are children of deleted dirs
+                    first_time = True
                     for d in dd.file_dupes:
                         kept = delete_lookup[d.path]
                         keeps, deletes = final_output[kept]
                         if d in deletes:
+                            # print('found', d.path, dd.path)
                             deletes.remove(d)
-                            deletes.add(dd)
+                            # we only do this once if there are multiple
+                            # substitutions
+                            if first_time:
+                                deletes.add(dd)
+                                first_time = False
                     # clean up subdirs that are children of deleted dirs
                     for sd in dd.subdir_dupes:
                         for kept, vals in final_output.items():
@@ -718,7 +805,12 @@ class DirectoryComparator:
                             if sd in deletes:
                                 # print('found', sd.path, dd.path)
                                 deletes.remove(sd)
-                                deletes.add(dd)
+                                if first_time:
+                                    deletes.add(dd)
+                                    first_time = False
+                    # this has no files or subdirs
+                    # if first_time:
+                    #     print('first_time', dd.path)
 
         return final_output
 
