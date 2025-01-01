@@ -4,10 +4,13 @@ import subprocess
 import unittest
 from pathlib import Path
 import pprint
+import argparse
 
 class DuplicateDeletionTest(unittest.TestCase):
     script_path = "deduplicate.py"  # Replace with the actual path to your script
     test_root = "test"  # Set a fixed directory for tests
+    preserve_root = "test_preserve"  # Set a fixed directory for preserve
+    is_last = False
 
     def setUp(self):
         """Set up the test root directory."""
@@ -20,9 +23,9 @@ class DuplicateDeletionTest(unittest.TestCase):
         if os.path.exists(self.test_root):
             shutil.rmtree(self.test_root)
 
-    def run_script(self, args):
+    def run_script(self, arguments):
         """Run the delete script with the specified arguments and store the output."""
-        command = ["python3", self.script_path] + args
+        command = ["python3", self.script_path] + arguments
         result = subprocess.run(command, capture_output=True, text=True)
         self._last_script_output = result.stdout
         self._last_script_error = result.stderr
@@ -69,6 +72,14 @@ class DuplicateDeletionTest(unittest.TestCase):
                     frag = basename
                 self.create_file(file, frag)
 
+        if self.is_last:
+            if args.show:
+                print(f"Input: \n{pprint.pformat(input)}")
+            if args.preserve:
+                if os.path.exists(self.preserve_root):
+                    shutil.rmtree(self.preserve_root)
+                path = os.path.join(self.preserve_root, 'input')
+                shutil.copytree(self.test_root, path)
         return self.run_script(["--debug", "--delete", 'test/folder1', 'test/folder2'])
 
     def validate_output(self, output):
@@ -133,6 +144,17 @@ class DuplicateDeletionTest(unittest.TestCase):
                              f"{pprint.pformat(sorted(actual_files))}\n"
                              f"{output}"
                              )
+
+            if self.is_last:
+                if args.show:
+                    self._print_script_output()
+                    print(f"\nOutput:\n"
+                          f"{pprint.pformat(output2_list)}\n")
+                if args.preserve:
+                    path = os.path.join(self.preserve_root, 'output')
+                    shutil.copytree(self.test_root, path)
+                self.is_last = False
+
         except AssertionError as e:
             # Print script output only on failure
             self._print_script_output()
@@ -413,6 +435,7 @@ class DuplicateDeletionTest(unittest.TestCase):
             ])
 
     def test_separate_dupes2(self):
+        self.is_last = True
         input = [
             'folder1/child1/file1',
             'folder1/child1/file2',
@@ -441,5 +464,10 @@ class DuplicateDeletionTest(unittest.TestCase):
             'folder2/file7',
             ])
 
+
 if __name__ == "__main__":
-    unittest.main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--show', action='store_true', required=False)
+    parser.add_argument('--preserve', action='store_true', required=False)
+    args = parser.parse_args()
+    unittest.main(argv=['first-arg-is-ignored'])
