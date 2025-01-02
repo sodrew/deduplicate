@@ -10,7 +10,6 @@ class DuplicateDeletionTest(unittest.TestCase):
     script_path = "deduplicate.py"  # Replace with the actual path to your script
     test_root = "test"  # Set a fixed directory for tests
     preserve_root = "test_preserve"  # Set a fixed directory for preserve
-    is_last = False
 
     def setUp(self):
         """Set up the test root directory."""
@@ -57,8 +56,7 @@ class DuplicateDeletionTest(unittest.TestCase):
         with open(path, "w") as f:
             f.write(content)
 
-
-    def execute(self, input):
+    def generate_input(self, input, is_last):
         for file in input:
             file = os.path.join(self.test_root, file)
             if file[-1] == os.sep:
@@ -72,7 +70,7 @@ class DuplicateDeletionTest(unittest.TestCase):
                     frag = basename
                 self.create_file(file, frag)
 
-        if self.is_last:
+        if is_last:
             if args.show:
                 print(f"Input: \n{pprint.pformat(input)}")
             if args.preserve:
@@ -80,17 +78,25 @@ class DuplicateDeletionTest(unittest.TestCase):
                     shutil.rmtree(self.preserve_root)
                 path = os.path.join(self.preserve_root, 'input')
                 shutil.copytree(self.test_root, path)
-        return self.run_script(["--debug", "--delete", 'test/folder1', 'test/folder2'])
 
-    def validate_output(self, output):
+
+    def execute(self, input, output, is_last=False):
+        output2 = set()
+        for o in output:
+            output2.add(os.path.join(self.test_root, o))
+        self.assertTrue(len(output) == len(output2),
+                         f"Duplicates found in expected output")
+
+        self.generate_input(input, is_last)
+
+        ret = self.run_script(["--debug", "--delete", 'test/folder1', 'test/folder2'])
+
+        self.validate_output(output2, is_last)
+
+        return ret
+
+    def validate_output(self, output2, is_last):
         try:
-            # add the test root
-            output2 = set()
-            for o in output:
-                output2.add(os.path.join(self.test_root, o))
-            self.assertTrue(len(output) == len(output2),
-                             f"Duplicates found in expected output")
-
             # cycle through the actual files
             actual_files = set()
             actual_file_dirs = set()
@@ -132,20 +138,20 @@ class DuplicateDeletionTest(unittest.TestCase):
             # print(new_dirs, diff)
 
             output2_list = sorted(output2)
-            output = ""
+            msg = ""
             if len(diff) > 0:
-                output = f"Extra: {sorted(diff)}\n"
+                msg += f"Extra: {sorted(diff)}\n"
             if len(diff2) > 0:
-                output += f"Miss:  {sorted(diff2)}\n"
-            self.assertFalse(len(output) != 0,
+                msg += f"Miss:  {sorted(diff2)}\n"
+            self.assertFalse(len(msg) != 0,
                              f"\nExpect:\n"
                              f"{pprint.pformat(output2_list)}\n"
                              f"Found:\n"
                              f"{pprint.pformat(sorted(actual_files))}\n"
-                             f"{output}"
+                             f"{msg}"
                              )
 
-            if self.is_last:
+            if is_last:
                 if args.show:
                     self._print_script_output()
                     print(f"\nOutput:\n"
@@ -153,7 +159,6 @@ class DuplicateDeletionTest(unittest.TestCase):
                 if args.preserve:
                     path = os.path.join(self.preserve_root, 'output')
                     shutil.copytree(self.test_root, path)
-                self.is_last = False
 
         except AssertionError as e:
             # Print script output only on failure
@@ -168,12 +173,12 @@ class DuplicateDeletionTest(unittest.TestCase):
             'folder2/file2',
             ]
 
-        self.execute(input)
-
-        self.validate_output([
+        output = [
             'folder1/file1',
             'folder2/file2',
-            ])
+            ]
+
+        self.execute(input, output)
 
 
     def test_empty_dirs(self):
@@ -182,12 +187,12 @@ class DuplicateDeletionTest(unittest.TestCase):
             'folder2/',
             ]
 
-        self.execute(input)
-
-        self.validate_output([
+        output = [
             'folder1/',
             'folder2/',
-            ])
+            ]
+
+        self.execute(input, output)
 
     def test_sep_directories(self):
         input = [
@@ -197,13 +202,12 @@ class DuplicateDeletionTest(unittest.TestCase):
             'folder2/file2',
             ]
 
-        self.execute(input)
-
-        self.validate_output([
+        output = [
             'folder1/file1',
             'folder1/file2',
-            ])
+            ]
 
+        self.execute(input, output)
 
     def test_superset(self):
         input = [
@@ -214,13 +218,13 @@ class DuplicateDeletionTest(unittest.TestCase):
             'folder2/file2',
             ]
 
-        self.execute(input)
-
-        self.validate_output([
+        output = [
             'folder1/file1',
             'folder1/file2',
             'folder1/file3',
-            ])
+            ]
+
+        self.execute(input, output)
 
     def test_superset2(self):
         input = [
@@ -231,13 +235,13 @@ class DuplicateDeletionTest(unittest.TestCase):
             'folder2/file3',
             ]
 
-        self.execute(input)
-
-        self.validate_output([
+        output = [
             'folder2/file1',
             'folder2/file2',
             'folder2/file3',
-            ])
+            ]
+
+        self.execute(input, output)
 
     def test_nested(self):
         input = [
@@ -249,12 +253,12 @@ class DuplicateDeletionTest(unittest.TestCase):
             'folder2/file2',
             ]
 
-        self.execute(input)
-
-        self.validate_output([
+        output = [
             'folder1/file1',
             'folder1/file2',
-            ])
+            ]
+
+        self.execute(input, output)
 
     def test_nested2(self):
         input = [
@@ -270,12 +274,12 @@ class DuplicateDeletionTest(unittest.TestCase):
             'folder2/child2/file2',
             ]
 
-        self.execute(input)
-
-        self.validate_output([
+        output = [
             'folder1/file1',
             'folder1/file2',
-            ])
+            ]
+
+        self.execute(input, output)
 
     def test_nested3(self):
         input = [
@@ -292,13 +296,13 @@ class DuplicateDeletionTest(unittest.TestCase):
             'folder2/child2/file2',
             ]
 
-        self.execute(input)
-
-        self.validate_output([
+        output = [
             'folder1/file1',
             'folder1/file2',
             'folder1/child2/file3',
-            ])
+            ]
+
+        self.execute(input, output)
 
     def test_nested_deep(self):
         input = [
@@ -319,12 +323,12 @@ class DuplicateDeletionTest(unittest.TestCase):
             'folder2/child2/grand1/greatgrand1/file2',
             ]
 
-        self.execute(input)
-
-        self.validate_output([
+        output = [
             'folder1/file1',
             'folder1/file2',
-            ])
+            ]
+
+        self.execute(input, output)
 
     def test_nested_deep2(self):
         input = [
@@ -344,12 +348,12 @@ class DuplicateDeletionTest(unittest.TestCase):
             'folder2/child2/grand1/greatgrand1/file2',
             ]
 
-        self.execute(input)
-
-        self.validate_output([
+        output = [
             'folder1/file1',
             'folder1/file2',
-            ])
+            ]
+
+        self.execute(input, output)
 
     def test_nested_deep3(self):
         input = [
@@ -365,13 +369,13 @@ class DuplicateDeletionTest(unittest.TestCase):
             'folder2/child1/grand1/file3',
             ]
 
-        self.execute(input)
-
-        self.validate_output([
+        output = [
             'folder1/file1',
             'folder1/file2',
             'folder1/child2/file3',
-            ])
+            ]
+
+        self.execute(input, output)
 
     def test_nested_deep4(self):
         input = [
@@ -381,13 +385,13 @@ class DuplicateDeletionTest(unittest.TestCase):
             'folder2/child3/grand2/file3',
             ]
 
-        self.execute(input)
-
-        self.validate_output([
+        output = [
             'folder2/child1/grand1/file1',
             'folder2/child2/grand2/file2',
             'folder2/child3/grand2/file3',
-            ])
+            ]
+
+        self.execute(input, output)
 
     def test_nested_deep5(self):
         input = [
@@ -399,13 +403,13 @@ class DuplicateDeletionTest(unittest.TestCase):
             'folder2/child3/grand2/file3',
             ]
 
-        self.execute(input)
-
-        self.validate_output([
+        output = [
             'folder1/child1/file1',
             'folder1/child1/file2',
             'folder1/child1/file3',
-            ])
+            ]
+
+        self.execute(input, output)
 
     def test_separate_dupes(self):
         input = [
@@ -423,19 +427,18 @@ class DuplicateDeletionTest(unittest.TestCase):
             'folder2/file6',
             ]
 
-        self.execute(input)
-
-        self.validate_output([
+        output = [
             'folder1/child1/file1',
             'folder1/child1/file2',
             'folder1/child1/file3',
             'folder1/child2/file4',
             'folder1/child2/file5',
             'folder1/child2/file6',
-            ])
+            ]
+
+        self.execute(input, output)
 
     def test_separate_dupes2(self):
-        self.is_last = True
         input = [
             'folder1/child1/file1',
             'folder1/child1/file2',
@@ -452,9 +455,7 @@ class DuplicateDeletionTest(unittest.TestCase):
             'folder2/file7',
             ]
 
-        self.execute(input)
-
-        self.validate_output([
+        output = [
             'folder1/child1/file1',
             'folder1/child1/file2',
             'folder1/child1/file3',
@@ -462,7 +463,9 @@ class DuplicateDeletionTest(unittest.TestCase):
             'folder1/child2/file5',
             'folder2/file6',
             'folder2/file7',
-            ])
+            ]
+
+        self.execute(input, output, is_last=True)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import os
+import gzip
 import shutil
 import json
 import hashlib
@@ -56,7 +57,7 @@ class HashAnalysis:
             self.directory = FileUtil.fullpath(directory)
             FileUtil.create_dir(storage)
             parts = FileUtil.splitpath(self.directory)
-            hash_file_name = '-'.join(parts) + '.json'
+            hash_file_name = '-'.join(parts) + '.json.gz'
             self.hash_file = FileUtil.join(storage, hash_file_name)
         else:
             self.directory = 'compare'
@@ -104,7 +105,7 @@ class HashAnalysis:
     def load_hashes(self):
         """Load stored hashes for this directory if available."""
         try:
-            with open(self.hash_file, 'r') as f:
+            with gzip.open(self.hash_file, 'rt', encoding='UTF-8') as f:
                 data = json.load(f)
             self.hashes_by_size.update(data.get('hashes_by_size', {}))
             self.rev_hashes_by_size.update(data.get('rev_hashes_by_size', {}))
@@ -121,7 +122,7 @@ class HashAnalysis:
 
     def save_hashes(self):
         """Save hashes for this directory."""
-        with open(self.hash_file, 'w') as f:
+        with gzip.open(self.hash_file, 'wt', encoding='UTF-8') as f:
             json.dump({
                 'hashes_by_size': self.hashes_by_size,
                 'rev_hashes_by_size': self.rev_hashes_by_size,
@@ -130,7 +131,7 @@ class HashAnalysis:
                 'hashes_full': self.hashes_full,
                 'rev_hashes_full': self.rev_hashes_full,
                 'empty_dirs': self.empty_dirs,
-            }, f, indent=2)
+            }, f)
         if self.debug:
             print(f"INFO: Hashes for {self.directory} saved to {self.hash_file}.")
 
@@ -443,16 +444,29 @@ class DupeDir(DupeFile):
             dd = dwd[self.parent]
             dd.decrement_dupes(df, dwd)
 
+    def increment_dupes(self, df, dwd):
+        self.count += 1
+        self.count_total += 1
+        # self.size -= df.size
+        # self.check_delete()
+        if self.parent in dwd:
+            dd = dwd[self.parent]
+            dd.increment_dupes(df, dwd)
+
     def keep(self, accum, delete_lookup, dwd):
         # do directory deletes
         keeps = set()
         deletes = set()
         size = 0
-        # print('keep', self.path)
+        # print('keep()', self.path)
         for dupe in self.file_dupes:
             ks, ds = dupe.keep(dwd)
             keeps.update(ks)
             deletes.update(ds)
+            for k in ks:
+                if k.parent in dwd:
+                    dd = dwd[k.parent]
+                    dd.increment_dupes(k, dwd)
             for d in ds:
                 # print(d.path)
                 # update who this is deleted by
@@ -764,14 +778,18 @@ class DirectoryComparator:
         # do more passes until dupes are all found
         while len(remaining_dupes) > 0:
             new_dwd_depth = defaultdict(list)
+            # create new depth lookup
             for df in remaining_dupes:
                 new_dwd_depth[df.depth - 1].append(dirs_w_dupes[df.parent])
 
+            # print('new_dwd_depth', pformat(new_dwd_depth))
             ordered_keys = sorted(new_dwd_depth.keys())
             if ordered_keys:
                 key = next(iter(ordered_keys))
                 start_list = new_dwd_depth[key]
+                # print('start_list', pformat(start_list))
                 d = DupeDir.calc_max(start_list, final_output.keys())
+                # print('calc', d)
                 kept, kepts, dels = d.keep(final_output, delete_lookup, dirs_w_dupes)
                 reviewed.update(kepts)
                 reviewed.update(dels)
