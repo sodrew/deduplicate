@@ -532,7 +532,7 @@ class DirectoryComparator:
         return merged_dict
 
     def merge_analyses(self):
-        print(f"Comparing directories:\n\t{self.analysis1.directory}\n\t{self.analysis2.directory}")
+        print(f"Merging analysis")
         # find the common keys in the size tables
         dict1 = self.analysis1.hashes_by_size
         dict2 = self.analysis2.hashes_by_size
@@ -609,31 +609,35 @@ class DirectoryComparator:
         try:
             final_dirs = self.analyze()
 
-            if not final_dirs:
-                print("No duplicates found")
-
             print(f"-------------------------------")
             print(f"Results")
             print(f"-------------------------------")
-            sizes2 = {}
-            # output the directories
-            ordered_keys = sorted(final_dirs)
-            for dpath in ordered_keys:
-               print(f"\nKeep dir:   {dpath}")
-               keeps, deletes, sizes = final_dirs[dpath]
-               for k in keeps:
-                   print(f"  keep file:{k.path}")
-               print(f"  Deleting: {self.readable_size(sizes)}")
-               size = 0
-               for d in deletes:
-                   print(f"            {d.path}")
-                   size += d.size
-                   # print(d.path, size)
-                   if exec_delete:
-                       FileUtil.delete(d.path)
-               sizes2[dpath] = size
-            for dpath, size in sizes2.items():
-                print(f"Saved: {self.readable_size(size)} by deleting duplicates of {dpath}")
+            if not final_dirs:
+                print("\nNo duplicates found")
+            else:
+                all_sizes = 0
+                # output the directories
+                ordered_keys = sorted(final_dirs)
+                all_deletes = set()
+                for dpath in ordered_keys:
+                   print(f"\nKeep dir:   {dpath}")
+                   keeps, deletes, sizes = final_dirs[dpath]
+                   for k in keeps:
+                       print(f"  keep file:{k.path}")
+                   print(f"  Deleting: {self.readable_size(sizes)}")
+                   size = 0
+                   for d in deletes:
+                       print(f"            {d.path}")
+                       size += d.size
+                       # print(d.path, size)
+                       if exec_delete:
+                           FileUtil.delete(d.path)
+                   all_deletes.update(deletes)
+                   all_sizes += size
+                print(f'\nConsolidated delete list: {self.readable_size(all_sizes)}')
+                for d in sorted(all_deletes, key=lambda d: d.path):
+                   print(f"\t{d.path}")
+
         except Exception as e:
             print(f"**ERROR**: Exception:{type(e).__name__} {e}", file=sys.stderr)
             raise e
@@ -653,6 +657,9 @@ class DirectoryComparator:
         self.analysis1.load_hashes()
         self.analysis2.load_hashes()
 
+        print(f"-------------------------------")
+        print(f"Analysis")
+        print(f"-------------------------------")
         self.analysis1.analyze()
         # self.analysis1.print()
         self.analysis2.analyze()
