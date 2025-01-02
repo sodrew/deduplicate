@@ -168,7 +168,7 @@ class HashAnalysis:
                 try:
                     file_size = FileUtil.size(full_path)
                 except OSError:
-                    print(f"**ERROR**: unable to get size for: {full_path}")
+                    print(f"**ERROR**: unable to get size for: {full_path}", file=sys.stderr)
                     file_size = 0
                 finally:
                     self.hashes_by_size[file_size].append(full_path)
@@ -635,7 +635,7 @@ class DirectoryComparator:
             for dpath, size in sizes2.items():
                 print(f"Saved: {self.readable_size(size)} by deleting duplicates of {dpath}")
         except Exception as e:
-            print(f"**Error**: Exception:{type(e).__name__} {e}")
+            print(f"**ERROR**: Exception:{type(e).__name__} {e}", file=sys.stderr)
             raise e
         finally:
             if self.debug:
@@ -843,7 +843,7 @@ class DirectoryComparator:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Find and compare duplicate files across directories.")
-    parser.add_argument('-d', '--debug', action='store_true', help="Debug mode which deletes hashes and has extra printing.")
+    parser.add_argument('--debug', action='store_true', help="Debug mode which deletes hashes and has extra printing.")
     parser.add_argument('--analyze', metavar='DIR', help="Analyze a specific directory.")
     parser.add_argument('--compare', nargs=2, metavar=('DIR1', 'DIR2'), help="Compare two directories for duplicates.")
 
@@ -851,6 +851,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    # print(args.debug)
     if args.analyze:
         analysis = HashAnalysis(args.analyze)
         analysis.analyze()

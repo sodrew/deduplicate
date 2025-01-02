@@ -8,19 +8,29 @@ import argparse
 
 class DuplicateDeletionTest(unittest.TestCase):
     script_path = "deduplicate.py"  # Replace with the actual path to your script
+    json_root = "dd_analysis"
     test_root = "test"  # Set a fixed directory for tests
     preserve_root = "test_preserve"  # Set a fixed directory for preserve
+    defargs = ['--delete', 'test/folder1', 'test/folder2']
+    had_exception = False
 
     def setUp(self):
         """Set up the test root directory."""
+        # print('setUp', self.id(), self.had_exception)
+        if self.__class__.had_exception:
+            self.skipTest('another test had an exception')
         if os.path.exists(self.test_root):
             shutil.rmtree(self.test_root)
         os.makedirs(self.test_root)
+        # if we disable debug we need to clean this up
+        if os.path.exists(self.json_root):
+            shutil.rmtree(self.json_root)
+        os.makedirs(self.json_root)
 
-    def tearDown(self):
-        """Clean up the test root directory."""
-        if os.path.exists(self.test_root):
-            shutil.rmtree(self.test_root)
+    # def tearDown(self):
+    #     """Clean up the test root directory."""
+    #     if os.path.exists(self.test_root):
+    #         shutil.rmtree(self.test_root)
 
     def run_script(self, arguments):
         """Run the delete script with the specified arguments and store the output."""
@@ -34,16 +44,17 @@ class DuplicateDeletionTest(unittest.TestCase):
     def func(self):
         return self.id().split('.')[2]
 
-    def _print_script_output(self):
+    def _print_script_output(self, input, output):
         """Print the script output when a test fails."""
-        print('\n======================================================================')
+        print(f"\n==={self.func()}===================================================================")
+        print(f"\n--- Test Input: --- \n{pprint.pformat(input)}")
+        print(f"\n--- Test Output: ---\n"
+              f"{pprint.pformat(output)}\n")
         # print(f"--- Command ---\n{' '.join(self._last_command)}")
-        print(f"--- Script Output: {self.func()} ---\n{self._last_script_output}")
+        print(f"--- Script Output: ---\n{self._last_script_output}")
         if self._last_script_error:
             print(f"\n--- Script Error ---\n{self._last_script_error}")
         print('\n======================================================================')
-
-
 
     def create_folder(self, path):
         """Create an empty folder."""
@@ -56,7 +67,7 @@ class DuplicateDeletionTest(unittest.TestCase):
         with open(path, "w") as f:
             f.write(content)
 
-    def generate_input(self, input, is_last):
+    def generate_input(self, input):
         for file in input:
             file = os.path.join(self.test_root, file)
             if file[-1] == os.sep:
@@ -70,32 +81,34 @@ class DuplicateDeletionTest(unittest.TestCase):
                     frag = basename
                 self.create_file(file, frag)
 
-        if is_last:
-            if args.show:
-                print(f"Input: \n{pprint.pformat(input)}")
-            if args.preserve:
-                if os.path.exists(self.preserve_root):
-                    shutil.rmtree(self.preserve_root)
-                path = os.path.join(self.preserve_root, 'input')
-                shutil.copytree(self.test_root, path)
+        # always copy over the input
+        path = os.path.join(self.preserve_root, 'input_tmp')
+        if os.path.exists(path):
+            shutil.rmtree(path)
+        shutil.copytree(self.test_root, path)
 
 
-    def execute(self, input, output, is_last=False):
+    def execute(self, input, output, output_detail=False,
+                defargs=None):
         output2 = set()
         for o in output:
             output2.add(os.path.join(self.test_root, o))
         self.assertTrue(len(output) == len(output2),
                          f"Duplicates found in expected output")
 
-        self.generate_input(input, is_last)
+        self.generate_input(input)
 
-        ret = self.run_script(["--debug", "--delete", 'test/folder1', 'test/folder2'])
+        if not defargs:
+            defargs = self.defargs
 
-        self.validate_output(output2, is_last)
+        # print('defargs', defargs, self.id())
+        ret = self.run_script(defargs)
+
+        self.validate_output(input, output2, output_detail)
 
         return ret
 
-    def validate_output(self, output2, is_last):
+    def validate_output(self, input, output2, output_detail):
         try:
             # cycle through the actual files
             actual_files = set()
@@ -144,26 +157,42 @@ class DuplicateDeletionTest(unittest.TestCase):
             if len(diff2) > 0:
                 msg += f"Miss:  {sorted(diff2)}\n"
             self.assertFalse(len(msg) != 0,
-                             f"\nExpect:\n"
-                             f"{pprint.pformat(output2_list)}\n"
-                             f"Found:\n"
+                             # f"\nExpect:\n"
+                             # f"{pprint.pformat(output2_list)}\n"
+                             f"\nFound:\n"
                              f"{pprint.pformat(sorted(actual_files))}\n"
-                             f"{msg}"
+                             f"\n{msg}"
                              )
-
-            if is_last:
-                if args.show:
-                    self._print_script_output()
-                    print(f"\nOutput:\n"
-                          f"{pprint.pformat(output2_list)}\n")
-                if args.preserve:
-                    path = os.path.join(self.preserve_root, 'output')
-                    shutil.copytree(self.test_root, path)
-
+            has_exception = None
         except AssertionError as e:
-            # Print script output only on failure
-            self._print_script_output()
-            raise e
+            has_exception = e
+        finally:
+            if has_exception:
+                self.__class__.had_exception = True
+                output_detail = True
+            if output_detail:
+                self._print_script_output(input, output2_list)
+
+                path = os.path.join(self.preserve_root, 'input_tmp')
+                path2 = os.path.join(self.preserve_root, 'input')
+                if os.path.exists(path2):
+                    shutil.rmtree(path2)
+                os.rename(path, path2)
+
+                path = os.path.join(self.preserve_root, 'jsongz')
+                if os.path.exists(path):
+                    shutil.rmtree(path)
+                shutil.copytree(self.json_root, path)
+
+                path = os.path.join(self.preserve_root, 'output')
+                if os.path.exists(path):
+                    shutil.rmtree(path)
+                shutil.copytree(self.test_root, path)
+            elif args.show_all:
+                self._print_script_output(input, output2_list)
+
+            if has_exception:
+                raise has_exception
 
 
     def test_simple(self):
@@ -465,12 +494,11 @@ class DuplicateDeletionTest(unittest.TestCase):
             'folder2/file7',
             ]
 
-        self.execute(input, output, is_last=True)
+        self.execute(input, output)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--show', action='store_true', required=False)
-    parser.add_argument('--preserve', action='store_true', required=False)
+    parser.add_argument('--show_all', action='store_true', required=False)
     args = parser.parse_args()
     unittest.main(argv=['first-arg-is-ignored'])
