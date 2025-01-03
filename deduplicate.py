@@ -72,6 +72,40 @@ class HashAnalysis:
         self.rev_hashes_full = {}
         self.loaded = False
         self.debug = debug
+        self.start_time = datetime.now()
+
+    @staticmethod
+    def fmt_td(td):
+        ret = ' '
+        d = td.days
+        h = int(td.seconds / 3600)
+        m = int((td.seconds / 60) % 60)
+        s = int(td.seconds % 60)
+        if d != 0:
+            ret += f'{d}d '
+        if h != 0:
+            ret += f'{h}h '
+        if m != 0:
+            ret += f'{m}m '
+        if s != 0:
+            ret += f'{s}s '
+        ret = ret.strip()
+        if ret == '':
+            ret = '<1s'
+        return ret.strip()
+
+    def print(self):
+        # if self.debug:
+        #     print("==================================")
+        #     print(f"directory: {self.directory}")
+        #     print("==================================")
+        #     print("\nhashes by size")
+        #     pprint(self.hashes_by_size)
+        #     print("\nhashes on 1k")
+        #     pprint(self.hashes_on_1k)
+        #     print("\nhashes full")
+        #     pprint(self.hashes_full)
+        return None
 
     @staticmethod
     def chunk_reader(fobj, chunk_size=1024):
@@ -143,19 +177,6 @@ class HashAnalysis:
         if self.debug:
             print(f"INFO: Deleted {self.hash_file} for {self.directory} hashes.")
 
-    def print(self):
-        # if self.debug:
-        #     print("==================================")
-        #     print(f"directory: {self.directory}")
-        #     print("==================================")
-        #     print("\nhashes by size")
-        #     pprint(self.hashes_by_size)
-        #     print("\nhashes on 1k")
-        #     pprint(self.hashes_on_1k)
-        #     print("\nhashes full")
-        #     pprint(self.hashes_full)
-        return None
-
     def analyze(self):
         """Analyze this directory and compute file hashes."""
         if self.loaded:
@@ -163,6 +184,8 @@ class HashAnalysis:
             return
 
         print(f"Analyzing directory: {self.directory}")
+        print(f"\tPass 1: by filesize ["
+              f'{HashAnalysis.fmt_td(datetime.now()-self.start_time)}]')
         for dirpath, dirs, filenames in os.walk(self.directory):
             for filename in filenames:
                 full_path = FileUtil.join(dirpath, filename)
@@ -180,6 +203,8 @@ class HashAnalysis:
                 self.empty_dirs.append(dirpath)
 
 
+        print(f"\tPass 2: by hash (1K) ["
+              f'{HashAnalysis.fmt_td(datetime.now()-self.start_time)}]')
         for file_size, files in self.hashes_by_size.items():
             if len(files) < 2:
                 continue
@@ -189,6 +214,8 @@ class HashAnalysis:
                     self.hashes_on_1k[small_hash].append(file)
                     self.rev_hashes_on_1k[file] = small_hash
 
+        print(f"\tPass 3: by hash (full) ["
+              f'{HashAnalysis.fmt_td(datetime.now()-self.start_time)}]')
         for small_hash, files in self.hashes_on_1k.items():
             if len(files) < 2:
                 continue
@@ -198,6 +225,8 @@ class HashAnalysis:
                     self.hashes_full[full_hash].append(file)
                     self.rev_hashes_full[file] = full_hash
 
+        print(f'\tTotal Analysis Time: '
+              f'{HashAnalysis.fmt_td(datetime.now()-self.start_time)}')
         self.save_hashes()
 
 
@@ -521,29 +550,10 @@ class DirectoryComparator:
 
     def clean(self):
         print(f'Total Execution Time: '
-              f'{self.fmt_td(datetime.now()-self.start_time)}')
+              f'{HashAnalysis.fmt_td(datetime.now()-self.start_time)}')
         if self.debug:
             self.analysis1.delete_hashes()
             self.analysis2.delete_hashes()
-
-    def fmt_td(self, td):
-        ret = ' '
-        d = td.days
-        h = int(td.seconds / 3600)
-        m = int((td.seconds / 60) % 60)
-        s = int(td.seconds % 60)
-        if d != 0:
-            ret += f'{d}d '
-        if h != 0:
-            ret += f'{h}h '
-        if m != 0:
-            ret += f'{m}m '
-        if s != 0:
-            ret += f'{s}s '
-        ret = ret.strip()
-        if ret == '':
-            ret = '<1s'
-        return ret.strip()
 
     @staticmethod
     def merge_common_keys(dict1, dict2):
