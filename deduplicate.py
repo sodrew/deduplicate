@@ -5,6 +5,7 @@ import shutil
 import json
 import hashlib
 import argparse
+from datetime import datetime
 from collections import defaultdict
 from pprint import pprint, pformat
 
@@ -516,10 +517,33 @@ class DirectoryComparator:
         self.size_lookup = {}
         self.hash_file_size = {}
         self.debug = debug
+        self.start_time = datetime.now()
 
     def clean(self):
-        self.analysis1.delete_hashes()
-        self.analysis2.delete_hashes()
+        print(f'Total Execution Time: '
+              f'{self.fmt_td(datetime.now()-self.start_time)}')
+        if self.debug:
+            self.analysis1.delete_hashes()
+            self.analysis2.delete_hashes()
+
+    def fmt_td(self, td):
+        ret = ' '
+        d = td.days
+        h = int(td.seconds / 3600)
+        m = int((td.seconds / 60) % 60)
+        s = int(td.seconds % 60)
+        if d != 0:
+            ret += f'{d}d '
+        if h != 0:
+            ret += f'{h}h '
+        if m != 0:
+            ret += f'{m}m '
+        if s != 0:
+            ret += f'{s}s '
+        ret = ret.strip()
+        if ret == '':
+            ret = '<1s'
+        return ret.strip()
 
     @staticmethod
     def merge_common_keys(dict1, dict2):
@@ -642,8 +666,7 @@ class DirectoryComparator:
             print(f"**ERROR**: Exception:{type(e).__name__} {e}", file=sys.stderr)
             raise e
         finally:
-            if self.debug:
-                self.clean()
+            self.clean()
 
 
     def delete(self):

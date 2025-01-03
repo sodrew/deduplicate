@@ -490,7 +490,7 @@ class DuplicateDeletionTest(unittest.TestCase):
             'folder1/child1/file3',
             'folder1/child2/file4',
             'folder1/child2/file5',
-            'folder2/file6',
+            'folder1/child2/file6',
             'folder2/file7',
             ]
 
