@@ -5,6 +5,7 @@ import shutil
 import json
 import hashlib
 import argparse
+import sys
 from datetime import datetime
 from collections import defaultdict
 from pprint import pprint, pformat
@@ -670,7 +671,7 @@ class DirectoryComparator:
                    all_sizes += size
                 print(f'\nConsolidated delete list: {self.readable_size(all_sizes)}')
                 for d in sorted(all_deletes, key=lambda d: d.path):
-                   print(f"\t{d.path}")
+                   print(f"{d.path}|{self.readable_size(d.size)}")
 
         except Exception as e:
             print(f"**ERROR**: Exception:{type(e).__name__} {e}", file=sys.stderr)
