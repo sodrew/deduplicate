@@ -465,7 +465,7 @@ class DuplicateDeletionTest(unittest.TestCase):
             'folder1/child2/file6',
             ]
 
-        self.execute(input, output, output_detail=True)
+        self.execute(input, output)
 
     def test_separate_dupes2(self):
         input = [
@@ -490,11 +490,11 @@ class DuplicateDeletionTest(unittest.TestCase):
             'folder1/child1/file3',
             'folder1/child2/file4',
             'folder1/child2/file5',
-            'folder1/child2/file6',
+            'folder2/file6',
             'folder2/file7',
             ]
 
-        self.execute(input, output)
+        self.execute(input, output, output_detail=True)
 
 
 if __name__ == "__main__":

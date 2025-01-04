@@ -1,108 +1,12 @@
 #!/usr/bin/env python
-import os
 import gzip
-import shutil
 import json
 import hashlib
 import argparse
 import sys
-from datetime import datetime
 from collections import defaultdict
 from pprint import pprint, pformat
-
-class FileUtil:
-    @staticmethod
-    def fullpath(filename):
-        return os.path.abspath(filename)
-
-    @staticmethod
-    def join(path, filename):
-        return os.path.abspath(os.path.join(path, filename))
-
-    @staticmethod
-    def parent(path):
-        return os.path.dirname(path)
-
-    @staticmethod
-    def splitpath(path):
-        return path.split(os.sep)
-
-    @staticmethod
-    def joinpath(parts):
-        return os.sep.join(parts)
-
-    @staticmethod
-    def create_dir(path):
-        if not os.path.exists(path):
-            os.makedirs(path)
-
-    @staticmethod
-    def delete(path):
-       try:
-           os.remove(path)
-       except IsADirectoryError:
-           # maybe this is a directory
-           shutil.rmtree(path)
-       except FileNotFoundError:
-           raise Exception(f"Delete target doesn't exist: {path}")
-
-    @staticmethod
-    def size(path):
-        return os.path.getsize(path)
-
-    @staticmethod
-    def human_readable(size):
-        # Define the units
-        units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
-
-        # Initialize the index for units
-        unit_index = 0
-
-        # Loop to find the appropriate unit
-        while size >= 1024 and unit_index < len(units) - 1:
-            size /= 1024.0
-            unit_index += 1
-
-        # Return the formatted string
-        return f"{size:.2f} {units[unit_index]}"
-
-class ProcessTimer:
-    def __init__(self, start=False):
-        self.start = None
-        if start:
-            self.start = datetime.now()
-        self.end = None
-
-    def start(self):
-        self.start = datetime.now()
-
-    def stop(self):
-        if self.start == None:
-            raise Exception('ProcessTimer.stop(): timer not started')
-        self.end = datetime.now()
-
-    def elapsed(self):
-        return self.end - self.start
-
-    def elapsed_readable(self):
-        td = self.elapsed()
-        ret = ' '
-        d = td.days
-        h = int(td.seconds / 3600)
-        m = int((td.seconds / 60) % 60)
-        s = int(td.seconds % 60)
-        if d != 0:
-            ret += f'{d}d '
-        if h != 0:
-            ret += f'{h}h '
-        if m != 0:
-            ret += f'{m}m '
-        if s != 0:
-            ret += f'{s}s '
-        ret = ret.strip()
-        if ret == '':
-            ret = '<1s'
-        return ret.strip()
+from utils import FileUtil, ProcessTimer
 
 
 class HashAnalysis:
@@ -225,7 +129,7 @@ class HashAnalysis:
 
         print(f"\tPass 1: by filesize", end=' ')
         subtimer = ProcessTimer(start=True)
-        for dirpath, dirs, filenames in os.walk(self.directory):
+        for dirpath, dirs, filenames in FileUtil.walk(self.directory):
             for filename in filenames:
                 full_path = FileUtil.join(dirpath, filename)
                 try:
@@ -377,7 +281,7 @@ class DupeDir(DupeFile):
 
     def load_fs(self, dupe_files, dupe_dirs):
         all_dupedirs_are_full = False
-        for dirpath, dirs, filenames in os.walk(self.path):
+        for dirpath, dirs, filenames in FileUtil.walk(self.path):
             for filename in filenames:
                 full_path = FileUtil.join(dirpath, filename)
                 if full_path in dupe_files:
@@ -568,7 +472,7 @@ class DupeDir(DupeFile):
 
     def check_single_parent(self):
         # print('checking', self.path, self.parent)
-        for dirpath, dirs, filenames in os.walk(self.parent):
+        for dirpath, dirs, filenames in FileUtil.walk(self.parent):
             if len(filenames) == 0 and len(dirs) == 1:
                 full_path = FileUtil.join(dirpath, dirs[0])
                 if full_path == self.path:
