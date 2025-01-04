@@ -4,6 +4,7 @@ import json
 import hashlib
 import argparse
 import sys
+import itertools
 from collections import defaultdict
 from pprint import pprint, pformat
 from utils import FileUtil, ProcessTimer
@@ -12,24 +13,30 @@ from utils import FileUtil, ProcessTimer
 class HashAnalysis:
     """Handles file hashing and analysis for a specific directory."""
 
-    def __init__(self, directory, debug=False, storage='dd_analysis'):
-        if directory:
-            self.directory = FileUtil.fullpath(directory)
-            FileUtil.create_dir(storage)
-            parts = FileUtil.splitpath(self.directory)
-            hash_file_name = '-'.join(parts) + '.json.gz'
-            self.hash_file = FileUtil.join(storage, hash_file_name)
-        else:
-            self.directory = 'compare'
+    def __init__(self, dirs, debug=False, storage_dir='dd_analysis'):
+        self.paths = set()
+        self.paths_loaded = set()
+        self.parents = set()
+        self.storage_dir = storage_dir
+        FileUtil.create_dir(self.storage_dir)
+        for dir in dirs:
+            path = FileUtil.fullpath(dir)
+            self.paths.add(path)
+            parent = FileUtil.parent(path)
+            self.parents.add(parent)
 
-        self.hashes_by_size = defaultdict(list)
-        self.hashes_on_1k = defaultdict(list)
-        self.hashes_full = defaultdict(list)
-        self.empty_dirs = []
+            paths = sorted(self.paths)
+            prefix = HashAnalysis.hash_str_list(paths)
+            self.storage_prefix = FileUtil.join(self.storage_dir, prefix)
+
+        self.hashes_by_size = defaultdict(set)
+        self.hashes_on_1k = defaultdict(set)
+        self.hashes_full = defaultdict(set)
         self.rev_hashes_by_size = {}
         self.rev_hashes_on_1k = {}
         self.rev_hashes_full = {}
-        self.loaded = False
+
+        self.empty_dirs = set()
         self.debug = debug
 
     def print(self):
@@ -69,35 +76,51 @@ class HashAnalysis:
             return None
         return hashobj.hexdigest()
 
+    @staticmethod
+    def hash_str_list(str_list, hash=hashlib.sha1):
+        hashobj = hash()
+        for str in str_list:
+            hashobj.update(str.encode())
+        return hashobj.hexdigest()
+
     def get_lookup_hash(self, first_chunk_only):
         if first_chunk_only:
             return self.hashes_on_1k
         else:
             return self.hashes_full
 
-    def load_hashes(self):
+    @staticmethod
+    def load_dict_set(to_dict_list, from_dict_list):
+        for k, v in from_dict_list.items():
+            to_dict_list[k] = set(v)
+
+    def load_hashes(self, prefix=None):
         """Load stored hashes for this directory if available."""
+        if not prefix:
+            prefix = self.storage_prefix
         try:
-            with gzip.open(self.hash_file, 'rt', encoding='UTF-8') as f:
+            with gzip.open(prefix + '.json.gz', 'rt', encoding='UTF-8') as f:
                 data = json.load(f)
-            self.hashes_by_size.update(data.get('hashes_by_size', {}))
-            self.rev_hashes_by_size.update(data.get('rev_hashes_by_size', {}))
-            self.hashes_on_1k.update(data.get('hashes_on_1k', {}))
-            self.rev_hashes_on_1k.update(data.get('rev_hashes_on_1k', {}))
-            self.hashes_full.update(data.get('hashes_full', {}))
-            self.rev_hashes_full.update(data.get('rev_hashes_full', {}))
-            self.empty_dirs = data.get('empty_dirs', [])
-            self.loaded = True
+            HashAnalysis.load_dict_set(self.hashes_by_size, data.get('hashes_by_size', {}))
+            HashAnalysis.load_dict_set(self.rev_hashes_by_size, data.get('rev_hashes_by_size', {}))
+            HashAnalysis.load_dict_set(self.hashes_on_1k, data.get('hashes_on_1k', {}))
+            HashAnalysis.load_dict_set(self.rev_hashes_on_1k, data.get('rev_hashes_on_1k', {}))
+            HashAnalysis.load_dict_set(self.hashes_full, data.get('hashes_full', {}))
+            HashAnalysis.load_dict_set(self.rev_hashes_full, data.get('rev_hashes_full', {}))
+            # we don't touch self.paths
+            self.paths_loaded = set(data.get('paths', []))
+            self.parents = set(data.get('parents', []))
+            self.empty_dirs = set(data.get('empty_dirs', []))
             if self.debug:
-                print(f"INFO: Loaded hashes for {self.directory} from {self.hash_file}.")
+                print(f"INFO: Loaded hashes for {pformat(self.paths)} from {prefix}.")
         except FileNotFoundError:
-            print(f"INFO: No stored hashes found for {self.directory}, will analyze.")
+            print(f"INFO: No stored hashes found for {pformat(self.paths)}, will analyze.")
         finally:
-            return self.loaded
+            return self.paths_loaded
 
     def save_hashes(self):
         """Save hashes for this directory."""
-        with gzip.open(self.hash_file, 'wt', encoding='UTF-8') as f:
+        with gzip.open(self.storage_prefix + '.json.gz', 'wt', encoding='UTF-8') as f:
             json.dump({
                 'hashes_by_size': self.hashes_by_size,
                 'rev_hashes_by_size': self.rev_hashes_by_size,
@@ -105,45 +128,73 @@ class HashAnalysis:
                 'rev_hashes_on_1k': self.rev_hashes_on_1k,
                 'hashes_full': self.hashes_full,
                 'rev_hashes_full': self.rev_hashes_full,
+                'paths': self.paths,
+                'parents': self.parents,
                 'empty_dirs': self.empty_dirs,
-            }, f)
+            }, f, default=list)
+        with open(self.storage_prefix + '.txt', 'w') as t:
+            t.write(pformat(self.paths))
+
         if self.debug:
-            print(f"INFO: Hashes for {self.directory} saved to {self.hash_file}.")
+            print(f"INFO: Hashes for {pformat(self.paths)} saved to {self.storage_prefix}.")
 
     def delete_hashes(self):
         """Delete hashes for this directory."""
-
-        FileUtil.delete(self.hash_file)
+        FileUtil.delete(self.storage_prefix + '.json.gz')
+        FileUtil.delete(self.storage_prefix + '.txt')
         if self.debug:
-            print(f"INFO: Deleted {self.hash_file} for {self.directory} hashes.")
+            print(f"INFO: Deleted {self.storage_prefix} for {pformat(self.paths)} hashes.")
+
+    def check_partial_load(self):
+        return self.paths_loaded
 
     def analyze(self):
         """Analyze this directory and compute file hashes."""
-        if self.loaded:
+        # if we loaded all paths, skip this
+        paths_remaining = self.paths - self.paths_loaded
+        if not paths_remaining:
             if self.debug:
-                print(f"INFO: Hashes already loaded for {self.directory}. Skipping analysis.")
+                print(f"INFO: Hashes already loaded for {pformat(self.paths)}. Skipping analysis.")
             return
+        # else:
+        #     # attempt partial load for each dir
+        #     unique_perms = set(itertools.permutations(paths_remaining))
+        #     sorted_perms = sorted(unique_perms, key=len)
+        #     # do so in a greedy way
+        #     for perms in sorted_perms:
+        #         if self.load_hashes(perms):
+        #             break
 
-        print(f"Analyzing directory: {self.directory}")
+        # # now recheck and do a full_load
+        # paths_remaining = self.paths - self.paths_loaded
+
+        # if paths_remaining:
+        #     analysis2 = HashAnalysis(paths_remaining)
+        #     analysis2.analyze()
+        #     print(f"INFO: Hashes loaded for {pformat(self.paths_loaded)}. Performing Merge.")
+        #     return self.merge(analysis2)
+
+        print(f"Analyzing directories: {pformat(paths_remaining)}")
         timer = ProcessTimer(start=True)
 
         print(f"\tPass 1: by filesize", end=' ')
         subtimer = ProcessTimer(start=True)
-        for dirpath, dirs, filenames in FileUtil.walk(self.directory):
-            for filename in filenames:
-                full_path = FileUtil.join(dirpath, filename)
-                try:
-                    file_size = FileUtil.size(full_path)
-                except OSError:
-                    print(f"**ERROR**: unable to get size for: {full_path}", file=sys.stderr)
-                    file_size = 0
-                finally:
-                    self.hashes_by_size[file_size].append(full_path)
-                    self.rev_hashes_by_size[full_path] = file_size
-            # find any empty dirs
-            if len(dirs) == 0 and len(filenames) == 0:
-                # print('found empty', dirpath)
-                self.empty_dirs.append(dirpath)
+        for path in paths_remaining:
+            for dirpath, dirs, filenames in FileUtil.walk(path):
+                for filename in filenames:
+                    full_path = FileUtil.join(dirpath, filename)
+                    try:
+                        file_size = FileUtil.size(full_path)
+                    except OSError:
+                        print(f"**ERROR**: unable to get size for: {full_path}", file=sys.stderr)
+                        file_size = 0
+                    finally:
+                        self.hashes_by_size[file_size].add(full_path)
+                        self.rev_hashes_by_size[full_path] = file_size
+                # find any empty dirs
+                if len(dirs) == 0 and len(filenames) == 0:
+                    # print('found empty', dirpath)
+                    self.empty_dirs.add(dirpath)
         subtimer.stop()
         print(f"[{subtimer.elapsed_readable()}]")
 
@@ -155,7 +206,7 @@ class HashAnalysis:
             for file in files:
                 small_hash = self.get_hash(file, first_chunk_only=True)
                 if small_hash:
-                    self.hashes_on_1k[small_hash].append(file)
+                    self.hashes_on_1k[small_hash].add(file)
                     self.rev_hashes_on_1k[file] = small_hash
         subtimer.stop()
         print(f"[{subtimer.elapsed_readable()}]")
@@ -168,7 +219,7 @@ class HashAnalysis:
             for file in files:
                 full_hash = self.get_hash(file, first_chunk_only=False)
                 if full_hash:
-                    self.hashes_full[full_hash].append(file)
+                    self.hashes_full[full_hash].add(file)
                     self.rev_hashes_full[file] = full_hash
         subtimer.stop()
         print(f"[{subtimer.elapsed_readable()}]")
@@ -176,8 +227,120 @@ class HashAnalysis:
         timer.stop()
         print(f"\tTotal Analysis Time: {timer.elapsed_readable()}")
 
+        self.paths_loaded = paths_remaining
+        self.paths = self.paths_loaded
         self.save_hashes()
 
+    def merge_hashes_by_size(self, analysis2):
+        print(f"\tPass 1: by filesize", end=' ')
+        timer = ProcessTimer(start=True)
+        hbs2 = analysis2.hashes_by_size
+
+        # Find the common keys
+        common_keys = self.hashes_by_size.keys() & hbs2.keys()
+
+        # Merge the values for the common keys
+        for key in common_keys:
+            self.hashes_by_size[key].update(hbs2[key])
+
+        # populate the reverse lookup
+        self.rev_hashes_by_size.update(analysis2.rev_hashes_by_size)
+
+        # add the empty dirs
+        self.empty_dirs.update(analysis2.empty_dirs)
+        timer.stop()
+        print(f"[{timer.elapsed_readable()}]")
+
+    def merge_hashes_on_1k(self, analysis2):
+        print(f"\tPass 2: by hash (1k)", end=' ')
+        timer = ProcessTimer(start=True)
+        for file_size, files in self.hashes_by_size.items():
+            if len(files) < 2:
+                continue
+            for file in files:
+                if file in self.rev_hashes_on_1k.keys():
+                    small_hash = self.rev_hashes_on_1k[file]
+                elif file in analysis2.rev_hashes_on_1k.keys():
+                    small_hash = analysis2.rev_hashes_on_1k[file]
+                else:
+                    small_hash = HashAnalysis.get_hash(file, first_chunk_only=True)
+
+                if small_hash:
+                    self.hashes_on_1k[small_hash].add(file)
+                    self.rev_hashes_on_1k[file] = small_hash
+                else:
+                    print(f"**ERROR**: unable to get 1k hash for: {file}", file=sys.stderr)
+        timer.stop()
+        print(f"[{timer.elapsed_readable()}]")
+
+    def merge_hashes_on_full(self, analysis2):
+        print(f"\tPass 3: by hash (full)", end=' ')
+        timer = ProcessTimer(start=True)
+
+        hash_file_size = {}
+
+        rev_full1 = self.rev_hashes_full
+        rev_full2 = analysis2.rev_hashes_full
+        rev_size1 = self.rev_hashes_by_size
+        rev_size2 = analysis2.rev_hashes_by_size
+
+        for small_hash, files in self.hashes_on_1k.items():
+            if len(files) < 2:
+                continue
+            for file in files:
+                if file in rev_full1.keys():
+                    full_hash = rev_full1[file]
+                    file_size = rev_size1[file]
+                elif file in rev_full2.keys():
+                    full_hash = rev_full2[file]
+                    file_size = rev_size2[file]
+                else:
+                    # new collision
+                    full_hash = HashAnalysis.get_hash(file, first_chunk_only=False)
+                    # the file should be in one of the file size hashes
+                    if file in rev_size1:
+                        file_size = rev_size1[file]
+                    else:
+                        file_size = rev_size2[file]
+
+                if full_hash:
+                    self.hashes_full[full_hash].add(file)
+                    self.rev_hashes_full[file] = full_hash
+                    # also update our master sizes dict
+                    self.rev_hashes_by_size[file] = file_size
+                    # create the hash to file size dict
+                    hash_file_size[full_hash] = file_size
+                else:
+                    print(f"**ERROR**: unable to get full hash for: {file}", file=sys.stderr)
+
+        timer.stop()
+        print(f"[{timer.elapsed_readable()}]")
+        return hash_file_size
+
+    def fully_loaded(self):
+        return self.paths == self.paths_loaded
+
+    def merge(self, analysis2):
+        print(f"Merging analysis")
+        if not self.fully_loaded() or not analysis2.fully_loaded():
+            print(f"**ERROR**: Hashes not loaded, Run HashAnalysis.analyze() first.")
+            return
+
+        timer = ProcessTimer(start=True)
+        self.merge_hashes_by_size(analysis2)
+        self.merge_hashes_on_1k(analysis2)
+        hash_file_size = self.merge_hashes_on_full(analysis2)
+
+        timer.stop()
+        print(f"\tTotal Analysis Time: {timer.elapsed_readable()}")
+
+        # update the storage_prefix
+        prefix = HashAnalysis.hash_str_list(self.paths)
+        self.storage_prefix = FileUtil.join(self.storage_dir, prefix)
+
+        self.save_hashes()
+
+        return hash_file_size
 
 class DupeFile:
     def __init__(self, file, hash='', size=0):
@@ -487,11 +650,11 @@ class DirectoryComparator:
     """Compares two directories using HashAnalysis instances."""
 
     def __init__(self, dir1, dir2, debug):
-        self.analysis1 = HashAnalysis(dir1, debug)
+        self.analysis1 = HashAnalysis([dir1], debug)
         if dir1 == dir2:
             self.analysis2 = self.analysis1
         else:
-            self.analysis2 = HashAnalysis(dir2, debug)
+            self.analysis2 = HashAnalysis([dir2], debug)
         self.size_lookup = {}
         self.hash_file_size = {}
         self.debug = debug
@@ -503,73 +666,6 @@ class DirectoryComparator:
         if self.debug:
             self.analysis1.delete_hashes()
             self.analysis2.delete_hashes()
-
-    @staticmethod
-    def merge_common_keys(dict1, dict2):
-        # Find the common keys
-        common_keys = dict1.keys() & dict2.keys()
-
-        # Merge the values for the common keys
-        merged_dict = {key: dict1[key] + dict2[key] for key in common_keys}
-
-        return merged_dict
-
-    def merge_analyses(self):
-        print(f"Merging analysis")
-        # find the common keys in the size tables
-        dict1 = self.analysis1.hashes_by_size
-        dict2 = self.analysis2.hashes_by_size
-        hashes_by_size = self.merge_common_keys(dict1, dict2)
-
-        hashes_on_1k = defaultdict(list)
-        # iterate to see if we have the hashes already
-        rev_1k1 = self.analysis1.rev_hashes_on_1k
-        rev_1k2 = self.analysis2.rev_hashes_on_1k
-        for file_size, files in hashes_by_size.items():
-            if len(files) < 2:
-                continue
-            for file in files:
-                if file in rev_1k1.keys():
-                    small_hash = rev_1k1[file]
-                elif file in rev_1k2.keys():
-                    small_hash = rev_1k2[file]
-                else:
-                    small_hash = HashAnalysis.get_hash(file, first_chunk_only=True)
-                if small_hash:
-                    hashes_on_1k[small_hash].append(file)
-
-        hashes_full = defaultdict(list)
-        rev_full1 = self.analysis1.rev_hashes_full
-        rev_full2 = self.analysis2.rev_hashes_full
-        rev_size1 = self.analysis1.rev_hashes_by_size
-        rev_size2 = self.analysis2.rev_hashes_by_size
-        for small_hash, files in hashes_on_1k.items():
-            if len(files) < 2:
-                continue
-            for file in files:
-                if file in rev_full1.keys():
-                    full_hash = rev_full1[file]
-                    file_size = rev_size1[file]
-                elif file in rev_full2.keys():
-                    full_hash = rev_full2[file]
-                    file_size = rev_size2[file]
-                else:
-                    # new collision
-                    full_hash = HashAnalysis.get_hash(file, first_chunk_only=False)
-                    # the file should be in one of the file size hashes
-                    if file in rev_size1:
-                        file_size = rev_size1[file]
-                    else:
-                        file_size = rev_size2[file]
-                # now build the output
-                hashes_full[full_hash].append(file)
-                self.hash_file_size[full_hash] = file_size
-                self.size_lookup[file] = file_size
-                # print(file, file_size)
-
-        # pprint(hashes_full)
-
-        return hashes_full
 
     def execute(self, exec_delete=False):
         try:
@@ -635,7 +731,11 @@ class DirectoryComparator:
         print(f"-------------------------------")
 
         # merge the two saved analyses
-        hashes_full = self.merge_analyses()
+        self.hash_file_size = self.analysis1.merge(self.analysis2)
+        self.size_lookup = self.analysis1.rev_hashes_by_size
+        hashes_full = self.analysis1.hashes_full
+        # pprint(hashes_full)
+
         # pprint(hashes_full)
         if not hashes_full:
             return {}
@@ -643,9 +743,7 @@ class DirectoryComparator:
         # loop through the duplicates by hash.
         # strip out non-duplicates.
         # lay the base of dupedir and dupefile objects.
-        parent1 = FileUtil.parent(self.analysis1.directory)
-        parent2 = FileUtil.parent(self.analysis2.directory)
-        stop_dirs = [parent1, parent2]
+
 
         # dupefiles[path] = DupeFile(path)
         dupefiles = {}
@@ -654,12 +752,10 @@ class DirectoryComparator:
         dirs_w_dupes_by_depth = defaultdict(list)
 
         # add our root dirs as they may not have dupes
-        dd = DupeDir(self.analysis1.directory, None)
-        dirs_w_dupes[dd.path] = dd
-        dirs_w_dupes_by_depth[dd.depth].append(dd)
-        dd = DupeDir(self.analysis2.directory, None)
-        dirs_w_dupes[dd.path] = dd
-        dirs_w_dupes_by_depth[dd.depth].append(dd)
+        for path in self.analysis1.paths:
+            dd = DupeDir(path, None)
+            dirs_w_dupes[dd.path] = dd
+            dirs_w_dupes_by_depth[dd.depth].append(dd)
 
         # create the dupe file objects
         for hash, files in hashes_full.items():
@@ -696,10 +792,10 @@ class DirectoryComparator:
             dd = DupeDir(dir, None)
             dirs_w_dupes[dir] = dd
             dirs_w_dupes_by_depth[dd.depth].append(dd)
-        for dir in self.analysis2.empty_dirs:
-            dd = DupeDir(dir, None)
-            dirs_w_dupes[dir] = dd
-            dirs_w_dupes_by_depth[dd.depth].append(dd)
+        # for dir in self.analysis2.empty_dirs:
+        #     dd = DupeDir(dir, None)
+        #     dirs_w_dupes[dir] = dd
+        #     dirs_w_dupes_by_depth[dd.depth].append(dd)
 
 
         # determine if dupe dirs are completely duplicate
@@ -716,7 +812,7 @@ class DirectoryComparator:
             for dd in dirs_w_dupes_by_depth[key]:
                 dd.fill_parents(dirs_w_dupes,
                                 dirs_w_dupes_by_depth,
-                                stop_dirs)
+                                self.analysis1.parents)
 
         # because we may update dirs_w_dupes_by_depth in fill_parents
         # we update the keys
@@ -829,7 +925,7 @@ if __name__ == "__main__":
 
     # print(args.debug)
     if args.analyze:
-        analysis = HashAnalysis(args.analyze)
+        analysis = HashAnalysis([args.analyze])
         analysis.analyze()
 
     if args.compare:
