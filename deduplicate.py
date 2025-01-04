@@ -50,6 +50,60 @@ class FileUtil:
     def size(path):
         return os.path.getsize(path)
 
+    @staticmethod
+    def human_readable(size):
+        # Define the units
+        units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
+
+        # Initialize the index for units
+        unit_index = 0
+
+        # Loop to find the appropriate unit
+        while size >= 1024 and unit_index < len(units) - 1:
+            size /= 1024.0
+            unit_index += 1
+
+        # Return the formatted string
+        return f"{size:.2f} {units[unit_index]}"
+
+class ProcessTimer:
+    def __init__(self, start=False):
+        self.start = None
+        if start:
+            self.start = datetime.now()
+        self.end = None
+
+    def start(self):
+        self.start = datetime.now()
+
+    def stop(self):
+        if self.start == None:
+            raise Exception('ProcessTimer.stop(): timer not started')
+        self.end = datetime.now()
+
+    def elapsed(self):
+        return self.end - self.start
+
+    def elapsed_readable(self):
+        td = self.elapsed()
+        ret = ' '
+        d = td.days
+        h = int(td.seconds / 3600)
+        m = int((td.seconds / 60) % 60)
+        s = int(td.seconds % 60)
+        if d != 0:
+            ret += f'{d}d '
+        if h != 0:
+            ret += f'{h}h '
+        if m != 0:
+            ret += f'{m}m '
+        if s != 0:
+            ret += f'{s}s '
+        ret = ret.strip()
+        if ret == '':
+            ret = '<1s'
+        return ret.strip()
+
 
 class HashAnalysis:
     """Handles file hashing and analysis for a specific directory."""
@@ -73,27 +127,6 @@ class HashAnalysis:
         self.rev_hashes_full = {}
         self.loaded = False
         self.debug = debug
-        self.start_time = datetime.now()
-
-    @staticmethod
-    def fmt_td(td):
-        ret = ' '
-        d = td.days
-        h = int(td.seconds / 3600)
-        m = int((td.seconds / 60) % 60)
-        s = int(td.seconds % 60)
-        if d != 0:
-            ret += f'{d}d '
-        if h != 0:
-            ret += f'{h}h '
-        if m != 0:
-            ret += f'{m}m '
-        if s != 0:
-            ret += f'{s}s '
-        ret = ret.strip()
-        if ret == '':
-            ret = '<1s'
-        return ret.strip()
 
     def print(self):
         # if self.debug:
@@ -155,6 +188,8 @@ class HashAnalysis:
                 print(f"INFO: Loaded hashes for {self.directory} from {self.hash_file}.")
         except FileNotFoundError:
             print(f"INFO: No stored hashes found for {self.directory}, will analyze.")
+        finally:
+            return self.loaded
 
     def save_hashes(self):
         """Save hashes for this directory."""
@@ -181,12 +216,15 @@ class HashAnalysis:
     def analyze(self):
         """Analyze this directory and compute file hashes."""
         if self.loaded:
-            print(f"INFO: Hashes already loaded for {self.directory}. Skipping analysis.")
+            if self.debug:
+                print(f"INFO: Hashes already loaded for {self.directory}. Skipping analysis.")
             return
 
         print(f"Analyzing directory: {self.directory}")
-        print(f"\tPass 1: by filesize ["
-              f'{HashAnalysis.fmt_td(datetime.now()-self.start_time)}]')
+        timer = ProcessTimer(start=True)
+
+        print(f"\tPass 1: by filesize", end=' ')
+        subtimer = ProcessTimer(start=True)
         for dirpath, dirs, filenames in os.walk(self.directory):
             for filename in filenames:
                 full_path = FileUtil.join(dirpath, filename)
@@ -202,10 +240,11 @@ class HashAnalysis:
             if len(dirs) == 0 and len(filenames) == 0:
                 # print('found empty', dirpath)
                 self.empty_dirs.append(dirpath)
+        subtimer.stop()
+        print(f"[{subtimer.elapsed_readable()}]")
 
-
-        print(f"\tPass 2: by hash (1K) ["
-              f'{HashAnalysis.fmt_td(datetime.now()-self.start_time)}]')
+        print(f"\tPass 2: by hash (1k)", end=' ')
+        subtimer = ProcessTimer(start=True)
         for file_size, files in self.hashes_by_size.items():
             if len(files) < 2:
                 continue
@@ -214,9 +253,11 @@ class HashAnalysis:
                 if small_hash:
                     self.hashes_on_1k[small_hash].append(file)
                     self.rev_hashes_on_1k[file] = small_hash
+        subtimer.stop()
+        print(f"[{subtimer.elapsed_readable()}]")
 
-        print(f"\tPass 3: by hash (full) ["
-              f'{HashAnalysis.fmt_td(datetime.now()-self.start_time)}]')
+        print(f"\tPass 3: by hash (full)", end=' ')
+        subtimer = ProcessTimer(start=True)
         for small_hash, files in self.hashes_on_1k.items():
             if len(files) < 2:
                 continue
@@ -225,9 +266,12 @@ class HashAnalysis:
                 if full_hash:
                     self.hashes_full[full_hash].append(file)
                     self.rev_hashes_full[file] = full_hash
+        subtimer.stop()
+        print(f"[{subtimer.elapsed_readable()}]")
 
-        print(f'\tTotal Analysis Time: '
-              f'{HashAnalysis.fmt_td(datetime.now()-self.start_time)}')
+        timer.stop()
+        print(f"\tTotal Analysis Time: {timer.elapsed_readable()}")
+
         self.save_hashes()
 
 
@@ -547,11 +591,11 @@ class DirectoryComparator:
         self.size_lookup = {}
         self.hash_file_size = {}
         self.debug = debug
-        self.start_time = datetime.now()
+        self.timer = ProcessTimer(start=True)
 
     def clean(self):
-        print(f'Total Execution Time: '
-              f'{HashAnalysis.fmt_td(datetime.now()-self.start_time)}')
+        self.timer.stop()
+        print(f'Total Execution Time: {self.timer.elapsed_readable()}')
         if self.debug:
             self.analysis1.delete_hashes()
             self.analysis2.delete_hashes()
@@ -623,23 +667,6 @@ class DirectoryComparator:
 
         return hashes_full
 
-    @staticmethod
-    def readable_size(size):
-        # Define the units
-        units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
-
-        # Initialize the index for units
-        unit_index = 0
-
-        # Loop to find the appropriate unit
-        while size >= 1024 and unit_index < len(units) - 1:
-            size /= 1024.0
-            unit_index += 1
-
-        # Return the formatted string
-        return f"{size:.2f} {units[unit_index]}"
-
-
     def execute(self, exec_delete=False):
         try:
             final_dirs = self.analyze()
@@ -659,7 +686,7 @@ class DirectoryComparator:
                    keeps, deletes, sizes = final_dirs[dpath]
                    for k in keeps:
                        print(f"  keep file:{k.path}")
-                   print(f"  Deleting: {self.readable_size(sizes)}")
+                   print(f"  Deleting: {FileUtil.human_readable(sizes)}")
                    size = 0
                    for d in deletes:
                        print(f"            {d.path}")
@@ -669,9 +696,9 @@ class DirectoryComparator:
                            FileUtil.delete(d.path)
                    all_deletes.update(deletes)
                    all_sizes += size
-                print(f'\nConsolidated delete list: {self.readable_size(all_sizes)}')
+                print(f'\nConsolidated delete list: {FileUtil.human_readable(all_sizes)}')
                 for d in sorted(all_deletes, key=lambda d: d.path):
-                   print(f"{d.path}|{self.readable_size(d.size)}")
+                   print(f"{d.path}|{FileUtil.human_readable(d.size)}")
 
         except Exception as e:
             print(f"**ERROR**: Exception:{type(e).__name__} {e}", file=sys.stderr)
@@ -688,16 +715,20 @@ class DirectoryComparator:
 
     def analyze(self):
         """Compare the two directories for duplicate files."""
-        self.analysis1.load_hashes()
-        self.analysis2.load_hashes()
+        loaded1 = self.analysis1.load_hashes()
+        loaded2 = self.analysis2.load_hashes()
 
         print(f"-------------------------------")
-        print(f"Analysis")
+        if loaded1 and loaded2:
+            print(f"Initial Analysis: Skipped since prior analyses loaded")
+        else:
+            print(f"Analysis")
+            print(f"-------------------------------")
+            self.analysis1.analyze()
+            # self.analysis1.print()
+            self.analysis2.analyze()
+            # self.analysis2.print()
         print(f"-------------------------------")
-        self.analysis1.analyze()
-        # self.analysis1.print()
-        self.analysis2.analyze()
-        # self.analysis2.print()
 
         # merge the two saved analyses
         hashes_full = self.merge_analyses()
