@@ -126,7 +126,8 @@ class DupeAnalysis:
             self.empty_dirs = set(data.get('empty_dirs', []))
             if self.debug:
                 print(f"INFO: Loaded hashes for {pformat(self.paths)} from {path}.")
-        return self.paths_loaded
+
+        return self.return_all()
 
     def save_hashes(self):
         paths = sorted(self.paths)
@@ -186,17 +187,24 @@ class DupeAnalysis:
     def paths_not_loaded(self):
         return self.paths - self.paths_loaded
 
+    def return_all(self):
+        return (self.hashes_full, self.rev_hashes_by_size,
+                self.paths, self.empty_dirs, self.parents)
+
     def load(self):
         """attempt to load various combinations of json past runs."""
-        self.load_hashes()
-        self.load_other_hashes()
-        if self.paths_not_loaded() == self.paths:
-            return self.analyze()
-        else:
-            while self.paths_not_loaded():
-                analysis2 = DupeAnalysis(paths_remaining)
-                analysis2.analyze()
-                self.merge(analysis2)
+        ret = self.load_hashes()
+        if self.paths_not_loaded:
+            self.load_other_hashes()
+            if self.paths_not_loaded() == self.paths:
+                self.analyze()
+            else:
+                while self.paths_not_loaded():
+                    analysis2 = DupeAnalysis(paths_remaining)
+                    analysis2.analyze()
+                    self.merge(analysis2)
+
+        return self.return_all()
 
     def analyze(self):
         """Analyze this directory and compute file hashes."""
@@ -258,8 +266,7 @@ class DupeAnalysis:
 
         self.save_hashes()
 
-        return (self.hashes_full, self.rev_hashes_by_size,
-                self.paths, self.empty_dirs, self.parents)
+        return self.return_all()
 
     def merge_hashes_by_size(self, analysis2):
         print(f"\tPass 1: by filesize", end=' ')
@@ -687,7 +694,7 @@ class DupeDedupe:
         print(f"Analysis")
         print(f"-------------------------------")
         (hashes_full, rev_hashes_by_size,
-         paths, empty_dirs, parents) = da.analyze()
+         paths, empty_dirs, parents) = da.load()
         print(f"-------------------------------")
 
         if self.debug:
