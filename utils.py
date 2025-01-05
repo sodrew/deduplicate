@@ -29,6 +29,10 @@ class FileUtil:
             os.makedirs(path)
 
     @staticmethod
+    def exists(path):
+        return os.path.exists(path)
+
+    @staticmethod
     def delete(path):
        try:
            os.remove(path)
