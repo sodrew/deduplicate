@@ -1,372 +1,332 @@
-import sys
-import gzip
-import json
 import hashlib
-import itertools
+import os
+import sqlite3
 from pprint import pprint, pformat
-from dupe_utils import FileUtil, ProcessTimer
-from collections import defaultdict
 
 class DupeAnalysis:
-    """Handles file hashing and analysis for a specific directory."""
+    """Handles file hashing and analysis for directories, optimized with layered hashing."""
 
-    def __init__(self, dirs, debug=False, storage_dir='dd_analysis'):
-        self.paths = set()
-        self.paths_loaded = set()
-        self.parents = set()
+    def __init__(self, dirs, debug=False, storage_dir='dd_analysis', file_size_limit=10 * 1024 * 1024, validate_suspect=False):
+        self.paths = {os.path.abspath(dir) for dir in dirs}
         self.storage_dir = storage_dir
-        FileUtil.create_dir(self.storage_dir)
-        for dir in dirs:
-            path = FileUtil.fullpath(dir)
-            self.paths.add(path)
-            parent = FileUtil.parent(path)
-            self.parents.add(parent)
-
-            paths = sorted(self.paths)
-            prefix = DupeAnalysis.hash_str_list(paths)
-            self.storage_prefix = FileUtil.join(self.storage_dir, prefix)
-
-        self.hashes_by_size = defaultdict(set)
-        self.hashes_on_1k = defaultdict(set)
-        self.hashes_full = defaultdict(set)
-        self.rev_hashes_by_size = {}
-        self.rev_hashes_on_1k = {}
-        self.rev_hashes_full = {}
-
-        self.empty_dirs = set()
+        self.db_path = self._get_db_path(self.paths, storage_dir)
         self.debug = debug
+        self.file_size_limit = file_size_limit
+        self.validate_suspect = validate_suspect
 
-    def print(self):
-        # if self.debug:
-        #     print("==================================")
-        #     print(f"directory: {self.directory}")
-        #     print("==================================")
-        #     print("\nhashes by size")
-        #     pprint(self.hashes_by_size)
-        #     print("\nhashes on 1k")
-        #     pprint(self.hashes_on_1k)
-        #     print("\nhashes full")
-        #     pprint(self.hashes_full)
-        return None
+        os.makedirs(self.storage_dir, exist_ok=True)
 
     @staticmethod
-    def chunk_reader(fobj, chunk_size=1024):
-        """Generator that reads a file in chunks of bytes."""
-        while True:
-            chunk = fobj.read(chunk_size)
-            if not chunk:
-                return
-            yield chunk
+    def _get_db_path(directories, storage_dir):
+        sorted_dirs = sorted(map(os.path.abspath, directories))
+        hash_value = hashlib.sha1('|'.join(sorted_dirs).encode()).hexdigest()
+        db_filename = f"analysis_{hash_value}.db"
+        return os.path.join(storage_dir, db_filename)
 
     @staticmethod
-    def get_hash(filename, first_chunk_only=False, hash=hashlib.sha1):
-        """Compute a hash for the given file."""
+    def _connect_db(db_path):
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        return conn, cursor
+
+    @staticmethod
+    def _init_db(db_path):
+        conn, cursor = DupeAnalysis._connect_db(db_path)
+        cursor.executescript("""
+        CREATE TABLE IF NOT EXISTS files (
+            id INTEGER PRIMARY KEY,
+            path TEXT UNIQUE,
+            size INTEGER,
+            beg_hash TEXT,
+            rev_hash TEXT,
+            full_hash TEXT,
+            name TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS empty_dirs (
+            id INTEGER PRIMARY KEY,
+            path TEXT UNIQUE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_files_size ON files(size);
+        CREATE INDEX IF NOT EXISTS idx_files_beg_hash ON files(beg_hash);
+        CREATE INDEX IF NOT EXISTS idx_files_beg_hash ON files(rev_hash);
+        CREATE INDEX IF NOT EXISTS idx_files_full_hash ON files(full_hash);
+        """)
+        conn.commit()
+        return conn, cursor
+
+    def load(self):
+        if os.path.exists(self.db_path):
+            print(f"Loading existing database for {self.paths} from {self.db_path}")
+            self.conn, self.cursor = DupeAnalysis._connect_db(self.db_path)
+        else:
+            print(f"No database found for {self.paths}, starting new analysis.")
+            self.conn, self.cursor = DupeAnalysis._init_db(self.db_path)
+            self.analyze()
+
+    def analyze(self):
+        print(self.paths)
+        for path in self.paths:
+            for dirpath, dirs, filenames in os.walk(path):
+                for filename in filenames:
+                    full_path = os.path.join(dirpath, filename)
+                    try:
+                        file_size = os.path.getsize(full_path)
+                        self._insert_file(full_path, file_size, filename)
+                    except OSError:
+                        continue
+
+                if not dirs and not filenames:
+                    self._insert_empty_dir(dirpath)
+
+        self._compute_hashes()
+
+    def _insert_file(self, path, size, name):
+        self.cursor.execute("""
+            INSERT OR IGNORE INTO files (path, size, name)
+            VALUES (?, ?, ?)
+        """, (path, size, name))
+        self.conn.commit()
+
+    def _insert_empty_dir(self, path):
+        self.cursor.execute("""
+            INSERT OR IGNORE INTO empty_dirs (path)
+            VALUES (?)
+        """, (path,))
+        self.conn.commit()
+
+    @staticmethod
+    def _generate_hash_sql(old, new):
+        return f"""
+        SELECT id, path
+        FROM files
+        WHERE {old}
+        IN
+        (
+        SELECT {old}
+        FROM files
+        WHERE {old} IS NOT NULL
+        AND {new} IS NULL
+        GROUP BY {old}
+        HAVING COUNT(id) > 1
+        )
+        """
+            # return (f"SELECT id, path FROM files WHERE {old} IN "
+            #     f"(SELECT {old} FROM files WHERE {old} IS NOT NULL "
+            #     f"AND {new} IS NULL GROUP BY {old} HAVING COUNT(id) > 1")
+
+
+    def _compute_hashes(self, full_hash=False):
+        res = self.cursor.execute(
+            DupeAnalysis._generate_hash_sql('size', 'beg_hash'))
+        if res:
+            for row in self.cursor.fetchall():
+                fid, path = row
+                beg_hash = self.get_hash(path, partial=True)
+                self._update_file_hashes(fid, beg_hash=beg_hash)
+
+        res = self.cursor.execute(
+            DupeAnalysis._generate_hash_sql('beg_hash', 'rev_hash'))
+        if res:
+            for row in self.cursor.fetchall():
+                fid, path = row
+                mid_hash = self.get_hash(path, position='middle')
+                end_hash = self.get_hash(path, position='end')
+                rev_hash = f"{end_hash}:{mid_hash}"
+                self._update_file_hashes(fid, rev_hash=rev_hash)
+
+        if not full_hash:
+            return
+
+        res = self.cursor.execute(
+            DupeAnalysis._generate_hash_sql('rev_hash', 'full_hash'))
+        if res:
+            for row in self.cursor.fetchall():
+                fid, path = row
+                full_hash = self.get_hash(path, partial=False)
+                self._update_file_hashes(fid, full_hash=full_hash)
+
+    def _update_file_hashes(self, fid, beg_hash=None, rev_hash=None, full_hash=None):
+        self.cursor.execute("""
+            UPDATE files
+            SET beg_hash = COALESCE(?, beg_hash),
+                rev_hash = COALESCE(?, rev_hash),
+                full_hash = COALESCE(?, full_hash)
+            WHERE id = ?
+        """, (beg_hash, rev_hash, full_hash, fid))
+        self.conn.commit()
+
+    @staticmethod
+    def get_hash(filename, partial=False, position=None, hash=hashlib.sha1):
         hashobj = hash()
         try:
-            with open(filename, 'rb') as file_object:
-                if first_chunk_only:
-                    hashobj.update(file_object.read(1024))
+            with open(filename, 'rb') as f:
+                if partial:
+                    hashobj.update(f.read(1024))
+                elif position == 'middle':
+                    f.seek(max(0, os.path.getsize(filename) // 2 - 512))
+                    hashobj.update(f.read(1024))
+                elif position == 'end':
+                    f.seek(max(0, os.path.getsize(filename) - 1024))
+                    hashobj.update(f.read(1024))
                 else:
-                    for chunk in DupeAnalysis.chunk_reader(file_object):
+                    while chunk := f.read(1024):
                         hashobj.update(chunk)
         except OSError:
             return None
         return hashobj.hexdigest()
 
-    @staticmethod
-    def hash_str_list(str_list, hash=hashlib.sha1):
-        hashobj = hash()
-        for str in str_list:
-            hashobj.update(str.encode())
-        return hashobj.hexdigest()
+    def merge(self, other_dirs):
+        """
+        Merge the current analysis with another set of directories.
 
-    def get_lookup_hash(self, first_chunk_only):
-        if first_chunk_only:
-            return self.hashes_on_1k
-        else:
-            return self.hashes_full
+        :param other_dirs: Another set of directories to merge with.
+        :return: Path to the new merged database.
+        """
+        other_dirs = {os.path.abspath(dir) for dir in other_dirs}
+        combined_dirs = self.paths | other_dirs
+        output_db_path = self._get_db_path(combined_dirs, self.storage_dir)
 
-    @staticmethod
-    def load_dict_set(to_dict_list, from_dict_list):
-        for k, v in from_dict_list.items():
-            to_dict_list[k] = set(v)
+        if os.path.exists(output_db_path):
+            print(f"Merged database already exists at {output_db_path}")
+            return output_db_path
 
-    @staticmethod
-    def test_hash_file(paths, storage_dir, postfix='.json.gz'):
-        paths = sorted(paths)
-        prefix = DupeAnalysis.hash_str_list(paths)
-        load_file = FileUtil.join(storage_dir, prefix + postfix)
-        if FileUtil.exists(load_file):
-            return load_file
-        else:
-            return None
+        other_db_path = self._get_db_path(other_dirs, self.storage_dir)
+        conn, cursor = DupeAnalysis._init_db(other_db_path)
 
-    def load_hashes(self, dirs=None):
-        """Load stored hashes for this directory if available."""
-        if not dirs:
-            dirs = self.paths
-        path = DupeAnalysis.test_hash_file(dirs, self.storage_dir)
-        if not path:
-            print(f"INFO: No stored hashes found for {path}, will analyze.")
-        else:
-            with gzip.open(path, 'rt', encoding='UTF-8') as f:
-                data = json.load(f)
-            DupeAnalysis.load_dict_set(self.hashes_by_size, data.get('hashes_by_size', {}))
-            self.rev_hashes_by_size = data.get('rev_hashes_by_size', {})
-            DupeAnalysis.load_dict_set(self.hashes_on_1k, data.get('hashes_on_1k', {}))
-            self.rev_hashes_on_1k = data.get('rev_hashes_on_1k', {})
-            DupeAnalysis.load_dict_set(self.hashes_full, data.get('hashes_full', {}))
-            self.rev_hashes_full = data.get('rev_hashes_full', {})
-            # we don't touch self.paths
-            self.paths_loaded = set(data.get('paths', []))
-            self.parents = set(data.get('parents', []))
-            self.empty_dirs = set(data.get('empty_dirs', []))
-            if self.debug:
-                print(f"INFO: Loaded hashes for {pformat(self.paths)} from {path}.")
+        # Copy data from both source databases into the output database
+        def copy_data(source_db_path):
+            conn, cursor = DupeAnalysis._connect_db(source_db_path)
+            cursor.execute("SELECT * FROM files")
+            for row in cursor.fetchall():
+                cursor_output.execute("""
+                    INSERT OR IGNORE INTO files VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, row)
+            cursor.execute("SELECT * FROM empty_dirs")
+            for row in cursor.fetchall():
+                cursor_output.execute("INSERT OR IGNORE INTO empty_dirs VALUES (?, ?)", row)
+            conn.close()
 
-        return self.return_all()
+        copy_data(self.db_path)
+        copy_data(other_db_path)
+        conn.commit()
 
-    def save_hashes(self):
-        paths = sorted(self.paths)
-        prefix = DupeAnalysis.hash_str_list(paths)
-        self.storage_prefix = FileUtil.join(self.storage_dir, prefix)
+        # Step 1: Identify potential duplicates across the merged data
+        cursor.execute("""
+            SELECT a.path, a.size, a.beg_hash, a.mid_hash, a.end_hash, a.full_hash, a.fast_full_hash, b.path
+            FROM files a
+            JOIN files b
+            ON a.size = b.size
+            AND a.beg_hash = b.beg_hash
+            AND (a.mid_hash IS NULL OR a.mid_hash = b.mid_hash)
+            AND (a.end_hash IS NULL OR a.end_hash = b.end_hash)
+            AND a.path != b.path
+        """)
+        potential_duplicates = cursor.fetchall()
 
-        """Save hashes for this directory."""
-        with gzip.open(self.storage_prefix + '.json.gz', 'wt', encoding='UTF-8') as f:
-            json.dump({
-                'hashes_by_size': self.hashes_by_size,
-                'rev_hashes_by_size': self.rev_hashes_by_size,
-                'hashes_on_1k': self.hashes_on_1k,
-                'rev_hashes_on_1k': self.rev_hashes_on_1k,
-                'hashes_full': self.hashes_full,
-                'rev_hashes_full': self.rev_hashes_full,
-                'paths': self.paths,
-                'parents': self.parents,
-                'empty_dirs': self.empty_dirs,
-            }, f, default=list)
-        with open(self.storage_prefix + '.txt', 'w') as t:
-            t.write(pformat(self.paths))
+        # Step 2: Recompute missing hashes for potential duplicates
+        for row in potential_duplicates:
+            file_a, size, beg_hash, mid_hash, end_hash, full_hash, fast_full_hash, file_b = row
+            if mid_hash is None:
+                mid_hash = self.get_hash(file_a, position='middle')
+                end_hash = self.get_hash(file_a, position='end')
+                self._update_file_hashes_in_db(cursor, file_a, mid_hash=mid_hash, end_hash=end_hash)
 
+            if full_hash is None and size <= self.file_size_limit:
+                full_hash = self.get_hash(file_a, partial=False)
+                self._update_file_hashes_in_db(cursor, file_a, full_hash=full_hash)
+            elif fast_full_hash is None and size > self.file_size_limit:
+                fast_full_hash = f"{beg_hash}:{mid_hash}:{end_hash}"
+                self._update_file_hashes_in_db(cursor, file_a, fast_full_hash=fast_full_hash)
+
+        conn.commit()
+        conn.close()
+        return output_db_path
+
+    def _update_file_hashes_in_db(self, cursor, path, beg_hash=None, mid_hash=None, end_hash=None, full_hash=None, fast_full_hash=None):
+        """
+        Update hash values for a file directly in the database.
+
+        :param cursor: SQLite cursor for the output database.
+        :param path: File path to update.
+        :param beg_hash: Beginning hash value.
+        :param mid_hash: Middle hash value.
+        :param end_hash: End hash value.
+        :param full_hash: Full file hash.
+        :param fast_full_hash: Fast full hash for large files.
+        """
+        cursor.execute("""
+            UPDATE files
+            SET beg_hash = COALESCE(?, beg_hash),
+                mid_hash = COALESCE(?, mid_hash),
+                end_hash = COALESCE(?, end_hash),
+                full_hash = COALESCE(?, full_hash),
+                fast_full_hash = COALESCE(?, fast_full_hash)
+            WHERE path = ?
+        """, (beg_hash, mid_hash, end_hash, full_hash, fast_full_hash, path))
+
+
+    def close(self):
+        """Close the database connection."""
+        if self.conn:
+            self.conn.close()
         if self.debug:
-            print(f"INFO: Hashes for {pformat(self.paths)} saved to {self.storage_prefix}.")
+            os.remove(self.db_path)
 
-    def delete_hashes(self):
-        """Delete hashes for this directory."""
-        FileUtil.delete(self.storage_prefix + '.json.gz')
-        FileUtil.delete(self.storage_prefix + '.txt')
-        if self.debug:
-            print(f"INFO: Deleted {self.storage_prefix} for {pformat(self.paths)} hashes.")
 
-    def load_other_hashes(self):
-        while self.paths_not_loaded():
-            # attempt partial load; search for permutations of dirs
-            # in a greedy way
-            unique_perms = set(itertools.permutations(
-                self.paths_not_loaded()))
-            sorted_perms = sorted(unique_perms, key=len)
-            load_file = None
-            dirs = None
-            for perm in sorted_perms:
-                load_file = DupeAnalysis.test_hash_file(perm,
-                                                        self.storage_dir)
-                if load_file:
-                    dirs = perm
-                    break
-            if load_file:
-                print(f"INFO: Partial load of {pformat(dirs)}. Performing Merge.")
-                analysis2 = DupeAnalysis(dirs)
-                analysis2.load_hashes()
-                self.merge(analysis2)
-            else:
-                # we exit this function as there was nothing left to load
-                break
+    def dump_db(self):
+        """Output the current database content for testing."""
+        files = []
+        empty_dirs = []
 
-    def paths_not_loaded(self):
-        return self.paths - self.paths_loaded
+        # Fetch files
+        for row in self.cursor.execute("""
+                SELECT path, size, beg_hash, rev_hash, full_hash, name
+                FROM files ORDER BY path ASC
+            """):
+            files.append({
+                "path": row[0],
+                "size": row[1],
+                "beg_hash": row[2],
+                "rev_hash": row[3],
+                "full_hash": row[4],
+                "name": row[5],
+            })
 
-    def return_all(self):
-        return (self.hashes_full, self.rev_hashes_by_size,
-                self.paths, self.empty_dirs, self.parents)
+        # Fetch empty directories
+        for row in self.cursor.execute("SELECT path FROM empty_dirs"):
+            empty_dirs.append(row[0])
 
-    def load(self):
-        """attempt to load various combinations of json past runs."""
-        ret = self.load_hashes()
-        if self.paths_not_loaded:
-            self.load_other_hashes()
-            if self.paths_not_loaded() == self.paths:
-                self.analyze()
-            else:
-                while self.paths_not_loaded():
-                    analysis2 = DupeAnalysis(paths_remaining)
-                    analysis2.analyze()
-                    self.merge(analysis2)
+        return {"files": files, "empty_dirs": empty_dirs}
 
-        return self.return_all()
+    def get_duplicates(self):
+        """
+        Identify and return duplicates based on hashes.
+        :return: Dictionary with duplicates grouped by their full hash or fast full hash.
+        """
+        duplicates = {}
 
-    def analyze(self):
-        """Analyze this directory and compute file hashes."""
+        # Fetch files grouped by full hash
+        self.cursor.execute("""
+            SELECT full_hash, GROUP_CONCAT(path)
+            FROM files
+            WHERE full_hash IS NOT NULL
+            GROUP BY full_hash
+            HAVING COUNT(*) > 1
+        """)
+        for row in self.cursor.fetchall():
+            duplicates[row[0]] = row[1].split(',')
 
-        print(f"Analyzing directories: {pformat(self.paths_not_loaded())}")
-        timer = ProcessTimer(start=True)
+        # Fetch files grouped by fast full hash for large files
+        self.cursor.execute("""
+            SELECT rev_hash, GROUP_CONCAT(path)
+            FROM files
+            WHERE rev_hash IS NOT NULL
+            GROUP BY rev_hash
+            HAVING COUNT(*) > 1
+        """)
+        for row in self.cursor.fetchall():
+            duplicates[row[0]] = row[1].split(',')
 
-        print(f"\tPass 1: by filesize", end=' ')
-        subtimer = ProcessTimer(start=True)
-        for path in self.paths_not_loaded():
-            for dirpath, dirs, filenames in FileUtil.walk(path):
-                for filename in filenames:
-                    full_path = FileUtil.join(dirpath, filename)
-                    try:
-                        file_size = FileUtil.size(full_path)
-                    except OSError:
-                        print(f"**ERROR**: unable to get size for: {full_path}", file=sys.stderr)
-                        file_size = 0
-                    finally:
-                        self.hashes_by_size[file_size].add(full_path)
-                        self.rev_hashes_by_size[full_path] = file_size
-                # find any empty dirs
-                if len(dirs) == 0 and len(filenames) == 0:
-                    # print('found empty', dirpath)
-                    self.empty_dirs.add(dirpath)
-        subtimer.stop()
-        print(f"[{subtimer.elapsed_readable()}]")
-
-        print(f"\tPass 2: by hash (1k)", end=' ')
-        subtimer = ProcessTimer(start=True)
-        for file_size, files in self.hashes_by_size.items():
-            if len(files) < 2:
-                continue
-            for file in files:
-                small_hash = self.get_hash(file, first_chunk_only=True)
-                if small_hash:
-                    self.hashes_on_1k[small_hash].add(file)
-                    self.rev_hashes_on_1k[file] = small_hash
-        subtimer.stop()
-        print(f"[{subtimer.elapsed_readable()}]")
-
-        print(f"\tPass 3: by hash (full)", end=' ')
-        subtimer = ProcessTimer(start=True)
-        for small_hash, files in self.hashes_on_1k.items():
-            if len(files) < 2:
-                continue
-            for file in files:
-                full_hash = self.get_hash(file, first_chunk_only=False)
-                if full_hash:
-                    self.hashes_full[full_hash].add(file)
-                    self.rev_hashes_full[file] = full_hash
-        subtimer.stop()
-        print(f"[{subtimer.elapsed_readable()}]")
-
-        timer.stop()
-        print(f"\tTotal Analysis Time: {timer.elapsed_readable()}")
-
-        self.paths_loaded = self.paths_not_loaded()
-
-        self.save_hashes()
-
-        return self.return_all()
-
-    def merge_hashes_by_size(self, analysis2):
-        print(f"\tPass 1: by filesize", end=' ')
-        timer = ProcessTimer(start=True)
-        hbs2 = analysis2.hashes_by_size
-
-        # Find the common keys
-        common_keys = self.hashes_by_size.keys() & hbs2.keys()
-
-        # Merge the values for the common keys
-        for key in common_keys:
-            self.hashes_by_size[key].update(hbs2[key])
-
-        # populate the reverse lookup
-        self.rev_hashes_by_size.update(analysis2.rev_hashes_by_size)
-
-        # add the empty dirs
-        self.empty_dirs.update(analysis2.empty_dirs)
-        timer.stop()
-        print(f"[{timer.elapsed_readable()}]")
-
-    def merge_hashes_on_1k(self, analysis2):
-        print(f"\tPass 2: by hash (1k)", end=' ')
-        timer = ProcessTimer(start=True)
-        for file_size, files in self.hashes_by_size.items():
-            if len(files) < 2:
-                continue
-            for file in files:
-                if file in self.rev_hashes_on_1k.keys():
-                    small_hash = self.rev_hashes_on_1k[file]
-                elif file in analysis2.rev_hashes_on_1k.keys():
-                    small_hash = analysis2.rev_hashes_on_1k[file]
-                else:
-                    small_hash = DupeAnalysis.get_hash(file, first_chunk_only=True)
-
-                if small_hash:
-                    self.hashes_on_1k[small_hash].add(file)
-                    self.rev_hashes_on_1k[file] = small_hash
-                else:
-                    print(f"**ERROR**: unable to get 1k hash for: {file}", file=sys.stderr)
-        timer.stop()
-        print(f"[{timer.elapsed_readable()}]")
-
-    def merge_hashes_on_full(self, analysis2):
-        print(f"\tPass 3: by hash (full)", end=' ')
-        timer = ProcessTimer(start=True)
-
-        rev_full1 = self.rev_hashes_full
-        rev_full2 = analysis2.rev_hashes_full
-        rev_size1 = self.rev_hashes_by_size
-        rev_size2 = analysis2.rev_hashes_by_size
-
-        for small_hash, files in self.hashes_on_1k.items():
-            if len(files) < 2:
-                continue
-            for file in files:
-                if file in rev_full1.keys():
-                    full_hash = rev_full1[file]
-                    file_size = rev_size1[file]
-                elif file in rev_full2.keys():
-                    full_hash = rev_full2[file]
-                    file_size = rev_size2[file]
-                else:
-                    # new collision
-                    full_hash = DupeAnalysis.get_hash(file, first_chunk_only=False)
-                    # the file should be in one of the file size hashes
-                    if file in rev_size1:
-                        file_size = rev_size1[file]
-                    else:
-                        file_size = rev_size2[file]
-
-                if full_hash:
-                    self.hashes_full[full_hash].add(file)
-                    self.rev_hashes_full[file] = full_hash
-                    # also update our master sizes dict
-                    self.rev_hashes_by_size[file] = file_size
-                else:
-                    print(f"**ERROR**: unable to get full hash for: {file}", file=sys.stderr)
-
-        timer.stop()
-        print(f"[{timer.elapsed_readable()}]")
-
-    def fully_loaded(self):
-        return self.paths == self.paths_loaded
-
-    def merge(self, analysis2):
-        print(f"Merging analysis")
-        self.load()
-        analysis2.load()
-        if not self.fully_loaded() or not analysis2.fully_loaded():
-            print(f"**ERROR**: Hashes not loaded, Run DupeAnalysis.analyze() first.")
-            return
-
-        timer = ProcessTimer(start=True)
-        self.merge_hashes_by_size(analysis2)
-        self.merge_hashes_on_1k(analysis2)
-        self.merge_hashes_on_full(analysis2)
-
-        timer.stop()
-        print(f"\tTotal Analysis Time: {timer.elapsed_readable()}")
-
-        # update the storage_prefix
-        prefix = DupeAnalysis.hash_str_list(self.paths)
-        self.storage_prefix = FileUtil.join(self.storage_dir, prefix)
-
-        self.save_hashes()
+        return duplicates
