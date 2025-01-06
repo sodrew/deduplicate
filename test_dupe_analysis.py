@@ -108,9 +108,10 @@ class TestDupeAnalysis(unittest.TestCase):
 
     def validate_duplicates(self, actual, expected):
         """Validate duplicates against expected output."""
-        for v in actual.values():
-            aset = set(v)
-            self.assertTrue(aset in expected)
+        sorted_vals = sorted(actual.values())
+
+        aset = set(sorted_vals)
+        self.assertTrue(aset in expected)
 
         # a = set(actual)
         # e = set(expected)

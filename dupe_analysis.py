@@ -96,10 +96,27 @@ class DupeAnalysis:
         """, (path,))
         self.conn.commit()
 
+    def _compute_hashes(self, full_hash=False):
+        self._compute_hash('size', 'beg_hash')
+        self._compute_hash('beg_hash', 'rev_hash')
+
+        if full_hash:
+            self._compute_hash('rev_hash', 'full_hash')
+
+    def _compute_hash(self, old, new):
+        res = self.cursor.execute(
+            DupeAnalysis._generate_hash_sql(old, new))
+        if res:
+            for row in self.cursor.fetchall():
+                pprint(row)
+                fid, size, path = row
+                hash = DupeAnalysis.get_hash(path, size, new)
+                self._update_file_hashes(fid, hash, new)
+
     @staticmethod
     def _generate_hash_sql(old, new):
         return f"""
-        SELECT id, path
+        SELECT id, size, path
         FROM files
         WHERE {old}
         IN
@@ -112,67 +129,36 @@ class DupeAnalysis:
         HAVING COUNT(id) > 1
         )
         """
-            # return (f"SELECT id, path FROM files WHERE {old} IN "
-            #     f"(SELECT {old} FROM files WHERE {old} IS NOT NULL "
-            #     f"AND {new} IS NULL GROUP BY {old} HAVING COUNT(id) > 1")
 
-
-    def _compute_hashes(self, full_hash=False):
-        res = self.cursor.execute(
-            DupeAnalysis._generate_hash_sql('size', 'beg_hash'))
-        if res:
-            for row in self.cursor.fetchall():
-                fid, path = row
-                beg_hash = self.get_hash(path, partial=True)
-                self._update_file_hashes(fid, beg_hash=beg_hash)
-
-        res = self.cursor.execute(
-            DupeAnalysis._generate_hash_sql('beg_hash', 'rev_hash'))
-        if res:
-            for row in self.cursor.fetchall():
-                fid, path = row
-                mid_hash = self.get_hash(path, position='middle')
-                end_hash = self.get_hash(path, position='end')
-                rev_hash = f"{end_hash}:{mid_hash}"
-                self._update_file_hashes(fid, rev_hash=rev_hash)
-
-        if not full_hash:
-            return
-
-        res = self.cursor.execute(
-            DupeAnalysis._generate_hash_sql('rev_hash', 'full_hash'))
-        if res:
-            for row in self.cursor.fetchall():
-                fid, path = row
-                full_hash = self.get_hash(path, partial=False)
-                self._update_file_hashes(fid, full_hash=full_hash)
-
-    def _update_file_hashes(self, fid, beg_hash=None, rev_hash=None, full_hash=None):
-        self.cursor.execute("""
-            UPDATE files
-            SET beg_hash = COALESCE(?, beg_hash),
-                rev_hash = COALESCE(?, rev_hash),
-                full_hash = COALESCE(?, full_hash)
-            WHERE id = ?
-        """, (beg_hash, rev_hash, full_hash, fid))
+    def _update_file_hashes(self, fid, hash, position):
+        print(fid, hash, position)
+        sql = f"""
+        UPDATE files
+        SET {position} = '{hash}'
+        WHERE id = {fid}
+        """
+        print(sql)
+        self.cursor.execute(sql)
         self.conn.commit()
 
     @staticmethod
-    def get_hash(filename, partial=False, position=None, hash=hashlib.sha1):
+    def get_hash(filename, filesize, position,
+                 chunk=1024, hash=hashlib.sha1):
         hashobj = hash()
         try:
             with open(filename, 'rb') as f:
-                if partial:
-                    hashobj.update(f.read(1024))
-                elif position == 'middle':
-                    f.seek(max(0, os.path.getsize(filename) // 2 - 512))
-                    hashobj.update(f.read(1024))
-                elif position == 'end':
-                    f.seek(max(0, os.path.getsize(filename) - 1024))
-                    hashobj.update(f.read(1024))
-                else:
-                    while chunk := f.read(1024):
+                if position == 'beg_hash':
+                    hashobj.update(f.read(chunk))
+                elif position == 'rev_hash':
+                    f.seek(max(0, filesize - chunk))
+                    hashobj.update(f.read(chunk))
+                    f.seek(max(0, filesize // 2 - chunk // 2))
+                    hashobj.update(f.read(chunk))
+                elif position == 'full_hash':
+                    while chunk := f.read(chunk):
                         hashobj.update(chunk)
+                else:
+                    raise Exception('invalid position')
         except OSError:
             return None
         return hashobj.hexdigest()
