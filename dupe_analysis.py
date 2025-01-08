@@ -1,27 +1,31 @@
 import hashlib
 import os
 import sqlite3
+import itertools
 from pprint import pprint, pformat
 
 class DupeAnalysis:
     """Handles file hashing and analysis for directories, optimized with layered hashing."""
 
-    def __init__(self, dirs, debug=False, storage_dir='dd_analysis', file_size_limit=10 * 1024 * 1024, validate_suspect=False):
-        self.paths = {os.path.abspath(dir) for dir in dirs}
-        self.storage_dir = storage_dir
-        self.db_path = self._get_db_path(self.paths, storage_dir)
+    def __init__(self, debug=False,
+                 db_root='dd_analysis', complete_hash=False):
+        self.paths = None
+        self.db_root = db_root
         self.debug = debug
-        self.file_size_limit = file_size_limit
-        self.validate_suspect = validate_suspect
+        self.db_path = None
+        self.complete_hash = complete_hash
 
-        os.makedirs(self.storage_dir, exist_ok=True)
+        os.makedirs(self.db_root, exist_ok=True)
 
     @staticmethod
-    def _get_db_path(directories, storage_dir):
+    def _get_db_path(directories, db_root):
         sorted_dirs = sorted(map(os.path.abspath, directories))
         hash_value = hashlib.sha1('|'.join(sorted_dirs).encode()).hexdigest()
-        db_filename = f"analysis_{hash_value}.db"
-        return os.path.join(storage_dir, db_filename)
+        db_filename = f"{hash_value}.db"
+        return os.path.join(db_root, db_filename)
+
+    def _set_db_path(self):
+        self.db_path = self._get_db_path(self.paths, self.db_root)
 
     @staticmethod
     def _connect_db(db_path):
@@ -56,17 +60,65 @@ class DupeAnalysis:
         conn.commit()
         return conn, cursor
 
-    def load(self):
-        if os.path.exists(self.db_path):
+    @staticmethod
+    def _exists(dirs, db_root):
+        db_path = DupeAnalysis._get_db_path(dirs, db_root)
+        exists = os.path.exists(db_path)
+        return (exists, db_path)
+
+    def load(self, dirs):
+        self.paths = {os.path.abspath(dir) for dir in dirs}
+        exists, db_path = DupeAnalysis._exists(self.paths, self.db_root)
+
+        if exists:
+            self.db_path = db_path
             print(f"Loading existing database for {self.paths} from {self.db_path}")
             self.conn, self.cursor = DupeAnalysis._connect_db(self.db_path)
+            return True
         else:
-            print(f"No database found for {self.paths}, starting new analysis.")
-            self.conn, self.cursor = DupeAnalysis._init_db(self.db_path)
-            self.analyze()
+            # base case: do analysis
+            if len(self.paths) == 1:
+                self.db_path = db_path
+                print(f"Creating database for {self.paths} from {self.db_path}")
+                self.conn, self.cursor = DupeAnalysis._init_db(db_path)
+                self.analyze()
+            else:
+                # attempt partial load; search for permutations of dirs
+                # in a greedy way
+                print(f"Searching for any individual databases from {self.paths}")
+                paths_not_loaded = self.paths
+                paths_found = []
+                path_count = len(paths_not_loaded) - 1
+                while paths_not_loaded and path_count > 0:
+                    combs = itertools.combinations(paths_not_loaded, path_count)
+                    found = set()
+                    for comb in combs:
+                        sc = set(comb)
+                        exists, db_path = DupeAnalysis._exists(sc, self.db_root)
+                        if exists:
+                            paths_found.append(sc)
+                            found = sc
+                            break
+                    paths_not_loaded = paths_not_loaded - found
+                    path_count -= 1
+
+                # print('paths_not_loaded', pformat(paths_not_loaded))
+                # create new ones if there are still some not found
+                if paths_not_loaded:
+                    for path in paths_not_loaded:
+                        # print('path', path)
+                        da = DupeAnalysis(self.debug, self.db_root, self.complete_hash)
+                        da.load([path])
+                        da.close()
+                        paths_found.append(path)
+
+                # print('paths_found', pformat(paths_found))
+                # add in all of the found paths
+                self.merge(paths_found)
+
 
     def analyze(self):
-        print(self.paths)
+        # print(self.paths)
         for path in self.paths:
             for dirpath, dirs, filenames in os.walk(path):
                 for filename in filenames:
@@ -108,7 +160,7 @@ class DupeAnalysis:
             DupeAnalysis._generate_hash_sql(old, new))
         if res:
             for row in self.cursor.fetchall():
-                pprint(row)
+                # pprint(row)
                 fid, size, path = row
                 hash = DupeAnalysis.get_hash(path, size, new)
                 self._update_file_hashes(fid, hash, new)
@@ -131,13 +183,13 @@ class DupeAnalysis:
         """
 
     def _update_file_hashes(self, fid, hash, position):
-        print(fid, hash, position)
+        # print(fid, hash, position)
         sql = f"""
         UPDATE files
         SET {position} = '{hash}'
         WHERE id = {fid}
         """
-        print(sql)
+        # print(sql)
         self.cursor.execute(sql)
         self.conn.commit()
 
@@ -170,65 +222,87 @@ class DupeAnalysis:
         :param other_dirs: Another set of directories to merge with.
         :return: Path to the new merged database.
         """
+        # check if this merge has already been done
         other_dirs = {os.path.abspath(dir) for dir in other_dirs}
         combined_dirs = self.paths | other_dirs
-        output_db_path = self._get_db_path(combined_dirs, self.storage_dir)
+        output_db_path = self._get_db_path(combined_dirs, self.db_root)
 
+        # if this is already the db we have loaded, do nothing
+        if output_db_path == self.db_path:
+            print(f"DupeAnalysis.merge(): Nothing to do, all dirs are present in current dataset.")
+            return
+
+        # if the paths are different, there are files missing
         if os.path.exists(output_db_path):
-            print(f"Merged database already exists at {output_db_path}")
-            return output_db_path
+            print(f"DupeAnalysis.merge(): Nothing to do, dataset exists and will be loaded.")
+            self.close()
+            self.load(combined_dirs)
+            return
 
-        other_db_path = self._get_db_path(other_dirs, self.storage_dir)
-        conn, cursor = DupeAnalysis._init_db(other_db_path)
+        # sub function to copy data between two dbs
+        def copy_data(source_db_path):
+                conn, cursor = DupeAnalysis._connect_db(source_db_path)
+                cursor.execute("SELECT * FROM files")
+                for row in cursor.fetchall():
+                    self.cursor.execute("""
+                        INSERT OR IGNORE INTO files VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, row)
+                cursor.execute("SELECT * FROM empty_dirs")
+                for row in cursor.fetchall():
+                    self.cursor.execute("INSERT OR IGNORE INTO empty_dirs VALUES (?, ?)", row)
+                conn.close()
+
+        missing_dirs = other_dirs - self.paths
+        # # we have to merge
+        # da = DupeAnalysis()
+        # # ensure that analysis is performed or something is loaded
+        # da.load(missing_dirs)
+        # da.close()
 
         # Copy data from both source databases into the output database
-        def copy_data(source_db_path):
-            conn, cursor = DupeAnalysis._connect_db(source_db_path)
-            cursor.execute("SELECT * FROM files")
-            for row in cursor.fetchall():
-                cursor_output.execute("""
-                    INSERT OR IGNORE INTO files VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, row)
-            cursor.execute("SELECT * FROM empty_dirs")
-            for row in cursor.fetchall():
-                cursor_output.execute("INSERT OR IGNORE INTO empty_dirs VALUES (?, ?)", row)
-            conn.close()
-
         copy_data(self.db_path)
-        copy_data(other_db_path)
-        conn.commit()
+        for missing_dir in missing_dirs:
+            db_path = self._get_db_path(missing_dir, self.db_root)
+            copy_data(db_path)
+            self.conn.commit()
 
-        # Step 1: Identify potential duplicates across the merged data
-        cursor.execute("""
-            SELECT a.path, a.size, a.beg_hash, a.mid_hash, a.end_hash, a.full_hash, a.fast_full_hash, b.path
-            FROM files a
-            JOIN files b
-            ON a.size = b.size
-            AND a.beg_hash = b.beg_hash
-            AND (a.mid_hash IS NULL OR a.mid_hash = b.mid_hash)
-            AND (a.end_hash IS NULL OR a.end_hash = b.end_hash)
-            AND a.path != b.path
-        """)
-        potential_duplicates = cursor.fetchall()
+        self.compute_hashes()
+        self.paths = combined_dirs
+        self._set_db_path()
 
-        # Step 2: Recompute missing hashes for potential duplicates
-        for row in potential_duplicates:
-            file_a, size, beg_hash, mid_hash, end_hash, full_hash, fast_full_hash, file_b = row
-            if mid_hash is None:
-                mid_hash = self.get_hash(file_a, position='middle')
-                end_hash = self.get_hash(file_a, position='end')
-                self._update_file_hashes_in_db(cursor, file_a, mid_hash=mid_hash, end_hash=end_hash)
 
-            if full_hash is None and size <= self.file_size_limit:
-                full_hash = self.get_hash(file_a, partial=False)
-                self._update_file_hashes_in_db(cursor, file_a, full_hash=full_hash)
-            elif fast_full_hash is None and size > self.file_size_limit:
-                fast_full_hash = f"{beg_hash}:{mid_hash}:{end_hash}"
-                self._update_file_hashes_in_db(cursor, file_a, fast_full_hash=fast_full_hash)
 
-        conn.commit()
-        conn.close()
-        return output_db_path
+        # # Step 1: Identify potential duplicates across the merged data
+        # cursor.execute("""
+        #     SELECT a.path, a.size, a.beg_hash, a.rev_hash, a.full_hash, b.path
+        #     FROM files a
+        #     JOIN files b
+        #     ON a.size = b.size
+        #     AND a.beg_hash = b.beg_hash
+        #     AND a.rev_hash = b.rev_hash
+        #     AND a.(a.end_hash IS NULL OR a.end_hash = b.end_hash)
+        #     AND a.path != b.path
+        # """)
+        # potential_duplicates = cursor.fetchall()
+
+        # # Step 2: Recompute missing hashes for potential duplicates
+        # for row in potential_duplicates:
+        #     file_a, size, beg_hash, mid_hash, end_hash, full_hash, fast_full_hash, file_b = row
+        #     if mid_hash is None:
+        #         mid_hash = self.get_hash(file_a, position='middle')
+        #         end_hash = self.get_hash(file_a, position='end')
+        #         self._update_file_hashes_in_db(cursor, file_a, mid_hash=mid_hash, end_hash=end_hash)
+
+        #     if full_hash is None and size <= self.file_size_limit:
+        #         full_hash = self.get_hash(file_a, partial=False)
+        #         self._update_file_hashes_in_db(cursor, file_a, full_hash=full_hash)
+        #     elif fast_full_hash is None and size > self.file_size_limit:
+        #         fast_full_hash = f"{beg_hash}:{mid_hash}:{end_hash}"
+        #         self._update_file_hashes_in_db(cursor, file_a, fast_full_hash=fast_full_hash)
+
+        # conn.commit()
+        # conn.close()
+        # return output_db_path
 
     def _update_file_hashes_in_db(self, cursor, path, beg_hash=None, mid_hash=None, end_hash=None, full_hash=None, fast_full_hash=None):
         """
@@ -257,8 +331,8 @@ class DupeAnalysis:
         """Close the database connection."""
         if self.conn:
             self.conn.close()
-        if self.debug:
-            os.remove(self.db_path)
+        # if self.debug:
+        #     os.remove(self.db_path)
 
 
     def dump_db(self):

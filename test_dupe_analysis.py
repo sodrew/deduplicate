@@ -8,6 +8,7 @@ from dupe_analysis import DupeAnalysis
 
 class TestDupeAnalysis(unittest.TestCase):
     test_root = "test"  # Set a fixed directory for tests
+    db_root = "test_dbs"
     had_exception = False
 
     def setUp(self):
@@ -15,9 +16,14 @@ class TestDupeAnalysis(unittest.TestCase):
         # print('setUp', self.id(), self.had_exception)
         if self.__class__.had_exception:
             self.skipTest('another test had an exception')
+        self.test_root = os.path.abspath(self.test_root)
         if os.path.exists(self.test_root):
             shutil.rmtree(self.test_root)
         os.makedirs(self.test_root)
+        self.db_root = os.path.abspath(self.db_root)
+        if os.path.exists(self.db_root):
+            shutil.rmtree(self.db_root)
+        os.makedirs(self.db_root)
 
     # def tearDown(self):
     #     """Clean up the test root directory."""
@@ -82,6 +88,7 @@ class TestDupeAnalysis(unittest.TestCase):
                             size, pad = size.split('+', 1)
                             pad = TestDupeAnalysis.human_size_to_bytes(pad)
                         size = TestDupeAnalysis.human_size_to_bytes(size)
+                    os.makedirs(os.path.dirname(name), exist_ok=True)
                     shutil.copy(src, name)
                     if size > 0:
                         # truncate file
@@ -108,45 +115,69 @@ class TestDupeAnalysis(unittest.TestCase):
 
     def validate_duplicates(self, actual, expected):
         """Validate duplicates against expected output."""
-        sorted_vals = sorted(actual.values())
+        found = {}
+        for e in expected:
+            efull = set()
+            for es in e:
+                efull.add(os.path.join(self.test_root, es))
+            for a in actual.values():
+                a = set(a)
+                # print('a:', pformat(a), '\nefull', pformat(efull))
+                if a == efull:
+                    key = '|'.join(sorted(list(efull)))
+                    found[key] = a
+                    break
 
-        aset = set(sorted_vals)
-        self.assertTrue(aset in expected)
+        self.assertTrue(len(found.keys()) == len(expected))
+        self.assertTrue(len(actual) == len(expected))
 
         # a = set(actual)
         # e = set(expected)
         # self.assertEqual(a-e, set(), f"\nextra: {pformat(a-e)}")
         # self.assertEqual(e-a, set(), f"\nmissing:{pformat(e-a)}")
 
-    def execute(self, input, dirs, expected):
+    def execute_default(self, dirs):
+        analysis = DupeAnalysis(debug=True, db_root=self.db_root)
+        analysis.load(dirs)
+        # db = analysis.dump_db()
+        # pprint(db)
+        actual = analysis.get_duplicates()
+        # pprint(actual)
+        analysis.close()
+        return actual
+
+    def execute_merge(self, dirs1, dirs2):
+        analysis1 = DupeAnalysis(debug=True, db_root=self.db_root)
+        analysis1.load(dirs1)
+        # db = analysis.dump_db()
+        # pprint(db)
+        analysis2 = DupeAnalysis(debug=True, db_root=self.db_root)
+        analysis2.load(dirs2)
+        analysis1.merge(dirs2)
+        # pprint(actual)
+        actual = analysis1.get_duplicates()
+        analysis1.close()
+        analysis2.close()
+        return actual
+
+
+    def execute(self, input, expected, dirs, input2=None, dirs2=None):
         self.generate_file_structure(input)
         dirs = [os.path.join(self.test_root, d) for d in dirs]
-        analysis = DupeAnalysis(dirs, debug=True)
-        analysis.load()
-        db = analysis.dump_db()
-        pprint(db)
-        actual = analysis.get_duplicates()
-        pprint(actual)
-        analysis.close()
-
+        if input2 and dirs2:
+            self.generate_file_structure(input2)
+            dirs2 = [os.path.join(self.test_root, d) for d in dirs2]
+            actual = self.execute_merge(dirs, dirs2)
+        else:
+            actual = self.execute_default(dirs)
         self.validate_duplicates(actual, expected)
 
-    def test_single_folder_duplicates(self):
-        """Test duplicate detection within a single folder."""
+    def test_simple_duplicate(self):
         input = [
-            'folder1/file1a.txt:3KB',
+            'folder1/file1a.txt',
             'folder1/file1b.txt==folder1/file1a.txt',
-            'folder1/file1c.txt==folder1/file1a.txt:2KB+1KB',
-            'folder1/file2.txt:32B',
-            'folder1/file3.txt:64B',
-            'folder1/file4.txt:128B',
-            'folder1/file5.txt:256B',
-            'folder1/file6.txt:512B',
-            'folder1/file7.txt:4KB',
-        ]
-
-        dirs = [
-            'folder1'
+            'folder1/file2.txt',
+            'folder1/file3.txt',
         ]
 
         expected = [
@@ -155,26 +186,158 @@ class TestDupeAnalysis(unittest.TestCase):
                 'folder1/file1b.txt',
                 ],
         ]
-        self.execute(input, dirs, expected)
 
-    # def test_multiple_folders_duplicates(self):
-    #     """Test duplicate detection across multiple folders."""
-    #     setup_file_structure(self.TEST_BASE, {
-    #         "folder1": ["file1.txt"],
-    #         "folder2": ["folder1/file1.txt", "file2.txt"]
-    #     })
+        dirs = [
+            'folder1'
+        ]
 
-    #     analysis = DupeAnalysis([f"{self.TEST_BASE}/folder1", f"{self.TEST_BASE}/folder2"], debug=True)
-    #     analysis.load()
+        self.execute(input, expected, dirs)
 
-    #     expected_duplicates = {
-    #         "some_hash_key": [
-    #             f"{self.TEST_BASE}/folder1/file1.txt",
-    #             f"{self.TEST_BASE}/folder2/file1.txt"
-    #         ]
-    #     }
-    #     self.validate_duplicates(analysis, expected_duplicates)
+    def test_different_sizes(self):
+        input = [
+            'folder1/file1a.txt:3KB',
+            'folder1/file1b.txt==folder1/file1a.txt',
+            'folder1/file1c.txt==folder1/file1a.txt:2KB+1KB',
+            'folder1/file1d.txt==folder1/file1a.txt:1KB+2KB',
+            'folder1/file2.txt:32B',
+            'folder1/file3.txt:64B',
+            'folder1/file4.txt:128B',
+            'folder1/file5.txt:256B',
+            'folder1/file6.txt:512B',
+            'folder1/file7.txt:4KB',
+        ]
 
+        expected = [
+            [
+                'folder1/file1a.txt',
+                'folder1/file1b.txt',
+                ],
+        ]
+
+        dirs = [
+            'folder1'
+        ]
+
+        self.execute(input, expected, dirs)
+
+    def test_separate_dirs(self):
+        input = [
+            'folder1/file1a.txt',
+            'folder2/file1b.txt==folder1/file1a.txt',
+        ]
+
+        expected = [
+            [
+                'folder1/file1a.txt',
+                'folder2/file1b.txt',
+                ],
+        ]
+
+        dirs = [
+            'folder1',
+            'folder2',
+        ]
+
+        self.execute(input, expected, dirs)
+
+    def test_nested_dirs(self):
+        input = [
+            'folder1/file1a.txt',
+            'folder1/subfolder1/file1a.txt==folder1/file1a.txt',
+        ]
+
+        expected = [
+            [
+                'folder1/file1a.txt',
+                'folder1/subfolder1/file1a.txt',
+                ],
+        ]
+
+        dirs = [
+            'folder1',
+        ]
+
+        self.execute(input, expected, dirs)
+
+    def test_empty_root_nested_dirs(self):
+        input = [
+            'folder1/subfolder1/file1a.txt',
+            'folder1/subfolder2/file1a.txt==folder1/subfolder1/file1a.txt',
+        ]
+
+        expected = [
+            [
+                'folder1/subfolder1/file1a.txt',
+                'folder1/subfolder2/file1a.txt',
+                ],
+        ]
+
+        dirs = [
+            'folder1',
+        ]
+
+        self.execute(input, expected, dirs)
+
+    def test_empty_root_nested_dirs2(self):
+        input = [
+            'folder1/subfolder1/file1a.txt',
+            'folder1/subfolder2/file1a.txt==folder1/subfolder1/file1a.txt',
+            'folder2/file1a.txt==folder1/subfolder1/file1a.txt',
+            'folder2/file2.txt',
+        ]
+
+        expected = [
+            [
+                'folder1/subfolder1/file1a.txt',
+                'folder1/subfolder2/file1a.txt',
+                'folder2/file1a.txt',
+                ],
+        ]
+
+        dirs = [
+            'folder1',
+            'folder2',
+        ]
+
+        self.execute(input, expected, dirs)
+
+    def test_db_merge(self):
+        input = [
+            'folder1/file1a.txt',
+            'folder1/file1b.txt==folder1/file1a.txt',
+            'folder1/file2.txt',
+        ]
+
+        input2 = [
+            'folder2/file1a.txt',
+            'folder2/file1b.txt==folder2/file1a.txt',
+            'folder2/file2.txt==folder1/file2.txt',
+        ]
+
+        expected = [
+            [
+                'folder1/file1a.txt',
+                'folder1/file1b.txt',
+                ],
+            [
+                'folder2/file1a.txt',
+                'folder2/file1b.txt',
+                ],
+            [
+                'folder1/file2.txt',
+                'folder2/file2.txt',
+                ],
+        ]
+
+        dirs = [
+            'folder1',
+        ]
+
+        dirs2 = [
+            'folder2',
+        ]
+
+        self.execute(input, expected, dirs, input2, dirs2)
     # def test_large_file_fast_hash(self):
     #     """Test fast hash detection for large files."""
     #     large_file_path = f"{self.TEST_BASE}/folder1/large_file.txt"
