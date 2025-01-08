@@ -166,15 +166,16 @@ class DupeAnalysis:
             DupeAnalysis._generate_hash_sql(old, new))
         if res:
             for row in self.cursor.fetchall():
-                # pprint(row)
-                fid, size, path = row
-                hash = DupeAnalysis.get_hash(path, size, new)
-                self._update_file_hashes(fid, hash, new)
+                pprint(row)
+                fid, size, path, chk_hash = row
+                if not chk_hash:
+                    hash = DupeAnalysis.get_hash(path, size, new)
+                    self._update_file_hashes(fid, hash, new)
 
     @staticmethod
     def _generate_hash_sql(old, new):
         return f"""
-        SELECT id, size, path
+        SELECT id, size, path, {new}
         FROM files
         WHERE {old}
         IN
@@ -182,7 +183,6 @@ class DupeAnalysis:
         SELECT {old}
         FROM files
         WHERE {old} IS NOT NULL
-        AND {new} IS NULL
         GROUP BY {old}
         HAVING COUNT(id) > 1
         )
