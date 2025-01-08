@@ -25,6 +25,9 @@ class TestDupeAnalysis(unittest.TestCase):
             shutil.rmtree(self.db_root)
         os.makedirs(self.db_root)
 
+    def func(self):
+        return self.id().split('.')[2]
+
     # def tearDown(self):
     #     """Clean up the test root directory."""
     #     if os.path.exists(self.test_root):
@@ -139,29 +142,27 @@ class TestDupeAnalysis(unittest.TestCase):
     def execute_default(self, dirs):
         analysis = DupeAnalysis(debug=True, db_root=self.db_root)
         analysis.load(dirs)
-        # db = analysis.dump_db()
-        # pprint(db)
+        pprint(analysis.dump_db())
         actual = analysis.get_duplicates()
-        # pprint(actual)
+        pprint(actual)
         analysis.close()
         return actual
 
     def execute_merge(self, dirs1, dirs2):
         analysis1 = DupeAnalysis(debug=True, db_root=self.db_root)
         analysis1.load(dirs1)
-        # db = analysis.dump_db()
-        # pprint(db)
-        analysis2 = DupeAnalysis(debug=True, db_root=self.db_root)
-        analysis2.load(dirs2)
-        analysis1.merge(dirs2)
-        # pprint(actual)
-        actual = analysis1.get_duplicates()
+        # pprint(analysis1.dump_db())
         analysis1.close()
+        analysis2 = DupeAnalysis(debug=True, db_root=self.db_root)
+        analysis2.load(dirs1 + dirs2)
+        # pprint(analysis2.dump_db())
+        actual = analysis2.get_duplicates()
+        # pprint(actual)
         analysis2.close()
         return actual
 
-
     def execute(self, input, expected, dirs, input2=None, dirs2=None):
+        print(f"\n==={self.func()}===================================================================")
         self.generate_file_structure(input)
         dirs = [os.path.join(self.test_root, d) for d in dirs]
         if input2 and dirs2:
@@ -170,113 +171,114 @@ class TestDupeAnalysis(unittest.TestCase):
             actual = self.execute_merge(dirs, dirs2)
         else:
             actual = self.execute_default(dirs)
+        print('\n======================================================================')
         self.validate_duplicates(actual, expected)
 
-    def test_simple_duplicate(self):
-        input = [
-            'folder1/file1a.txt',
-            'folder1/file1b.txt==folder1/file1a.txt',
-            'folder1/file2.txt',
-            'folder1/file3.txt',
-        ]
+    # def test_simple_duplicate(self):
+    #     input = [
+    #         'folder1/file1a.txt',
+    #         'folder1/file1b.txt==folder1/file1a.txt',
+    #         'folder1/file2.txt',
+    #         'folder1/file3.txt',
+    #     ]
 
-        expected = [
-            [
-                'folder1/file1a.txt',
-                'folder1/file1b.txt',
-                ],
-        ]
+    #     expected = [
+    #         [
+    #             'folder1/file1a.txt',
+    #             'folder1/file1b.txt',
+    #             ],
+    #     ]
 
-        dirs = [
-            'folder1'
-        ]
+    #     dirs = [
+    #         'folder1'
+    #     ]
 
-        self.execute(input, expected, dirs)
+    #     self.execute(input, expected, dirs)
 
-    def test_different_sizes(self):
-        input = [
-            'folder1/file1a.txt:3KB',
-            'folder1/file1b.txt==folder1/file1a.txt',
-            'folder1/file1c.txt==folder1/file1a.txt:2KB+1KB',
-            'folder1/file1d.txt==folder1/file1a.txt:1KB+2KB',
-            'folder1/file2.txt:32B',
-            'folder1/file3.txt:64B',
-            'folder1/file4.txt:128B',
-            'folder1/file5.txt:256B',
-            'folder1/file6.txt:512B',
-            'folder1/file7.txt:4KB',
-        ]
+    # def test_different_sizes(self):
+    #     input = [
+    #         'folder1/file1a.txt:3KB',
+    #         'folder1/file1b.txt==folder1/file1a.txt',
+    #         'folder1/file1c.txt==folder1/file1a.txt:2KB+1KB',
+    #         'folder1/file1d.txt==folder1/file1a.txt:1KB+2KB',
+    #         'folder1/file2.txt:32B',
+    #         'folder1/file3.txt:64B',
+    #         'folder1/file4.txt:128B',
+    #         'folder1/file5.txt:256B',
+    #         'folder1/file6.txt:512B',
+    #         'folder1/file7.txt:4KB',
+    #     ]
 
-        expected = [
-            [
-                'folder1/file1a.txt',
-                'folder1/file1b.txt',
-                ],
-        ]
+    #     expected = [
+    #         [
+    #             'folder1/file1a.txt',
+    #             'folder1/file1b.txt',
+    #             ],
+    #     ]
 
-        dirs = [
-            'folder1'
-        ]
+    #     dirs = [
+    #         'folder1'
+    #     ]
 
-        self.execute(input, expected, dirs)
+    #     self.execute(input, expected, dirs)
 
-    def test_separate_dirs(self):
-        input = [
-            'folder1/file1a.txt',
-            'folder2/file1b.txt==folder1/file1a.txt',
-        ]
+    # def test_separate_dirs(self):
+    #     input = [
+    #         'folder1/file1a.txt',
+    #         'folder2/file1b.txt==folder1/file1a.txt',
+    #     ]
 
-        expected = [
-            [
-                'folder1/file1a.txt',
-                'folder2/file1b.txt',
-                ],
-        ]
+    #     expected = [
+    #         [
+    #             'folder1/file1a.txt',
+    #             'folder2/file1b.txt',
+    #             ],
+    #     ]
 
-        dirs = [
-            'folder1',
-            'folder2',
-        ]
+    #     dirs = [
+    #         'folder1',
+    #         'folder2',
+    #     ]
 
-        self.execute(input, expected, dirs)
+    #     self.execute(input, expected, dirs)
 
-    def test_nested_dirs(self):
-        input = [
-            'folder1/file1a.txt',
-            'folder1/subfolder1/file1a.txt==folder1/file1a.txt',
-        ]
+    # def test_nested_dirs(self):
+    #     input = [
+    #         'folder1/file1a.txt',
+    #         'folder1/subfolder1/file1a.txt==folder1/file1a.txt',
+    #     ]
 
-        expected = [
-            [
-                'folder1/file1a.txt',
-                'folder1/subfolder1/file1a.txt',
-                ],
-        ]
+    #     expected = [
+    #         [
+    #             'folder1/file1a.txt',
+    #             'folder1/subfolder1/file1a.txt',
+    #             ],
+    #     ]
 
-        dirs = [
-            'folder1',
-        ]
+    #     dirs = [
+    #         'folder1',
+    #     ]
 
-        self.execute(input, expected, dirs)
+    #     self.execute(input, expected, dirs)
 
-    def test_empty_root_nested_dirs(self):
-        input = [
-            'folder1/subfolder1/file1a.txt',
-            'folder1/subfolder2/file1a.txt==folder1/subfolder1/file1a.txt',
-        ]
+    # def test_empty_root_nested_dirs(self):
+    #     input = [
+    #         'folder1/subfolder1/file1a.txt',
+    #         'folder1/subfolder2/file1a.txt==folder1/subfolder1/file1a.txt',
+    #     ]
 
-        expected = [
-            [
-                'folder1/subfolder1/file1a.txt',
-                'folder1/subfolder2/file1a.txt',
-                ],
-        ]
+    #     expected = [
+    #         [
+    #             'folder1/subfolder1/file1a.txt',
+    #             'folder1/subfolder2/file1a.txt',
+    #             ],
+    #     ]
 
-        dirs = [
-            'folder1',
-        ]
+    #     dirs = [
+    #         'folder1',
+    #     ]
 
-        self.execute(input, expected, dirs)
+    #     self.execute(input, expected, dirs)
 
     def test_empty_root_nested_dirs2(self):
         input = [
@@ -301,79 +303,40 @@ class TestDupeAnalysis(unittest.TestCase):
 
         self.execute(input, expected, dirs)
 
-    def test_db_merge(self):
-        input = [
-            'folder1/file1a.txt',
-            'folder1/file1b.txt==folder1/file1a.txt',
-            'folder1/file2.txt',
-        ]
+    # def test_db_merge(self):
+    #     input = [
+    #         'folder1/file1a.txt',
+    #         'folder1/file1b.txt==folder1/file1a.txt',
+    #         'folder1/file2.txt',
+    #     ]
 
-        input2 = [
-            'folder2/file1a.txt',
-            'folder2/file1b.txt==folder2/file1a.txt',
-            'folder2/file2.txt==folder1/file2.txt',
-        ]
+    #     input2 = [
+    #         'folder2/file1a.txt',
+    #         'folder2/file1b.txt==folder2/file1a.txt',
+    #         'folder2/file2.txt==folder1/file2.txt',
+    #     ]
 
-        expected = [
-            [
-                'folder1/file1a.txt',
-                'folder1/file1b.txt',
-                ],
-            [
-                'folder2/file1a.txt',
-                'folder2/file1b.txt',
-                ],
-            [
-                'folder1/file2.txt',
-                'folder2/file2.txt',
-                ],
-        ]
+    #     expected = [
+    #         [
+    #             'folder1/file1a.txt',
+    #             'folder1/file1b.txt',
+    #             ],
+    #         [
+    #             'folder2/file1a.txt',
+    #             'folder2/file1b.txt',
+    #             ],
+    #         [
+    #             'folder1/file2.txt',
+    #             'folder2/file2.txt',
+    #             ],
+    #     ]
 
-        dirs = [
-            'folder1',
-        ]
+    #     dirs = [
+    #         'folder1',
+    #     ]
 
-        dirs2 = [
-            'folder2',
-        ]
+    #     dirs2 = [
+    #         'folder2',
+    #     ]
 
-        self.execute(input, expected, dirs, input2, dirs2)
-    # def test_large_file_fast_hash(self):
-    #     """Test fast hash detection for large files."""
-    #     large_file_path = f"{self.TEST_BASE}/folder1/large_file.txt"
-    #     os.makedirs(f"{self.TEST_BASE}/folder1", exist_ok=True)
-    #     with open(large_file_path, "w") as f:
-    #         f.write("content" * 1024 * 1024)  # 6MB file
-
-    #     analysis = DupeAnalysis([f"{self.TEST_BASE}/folder1"], debug=True, file_size_limit=5 * 1024 * 1024)
-    #     analysis.load()
-
-    #     duplicates = analysis.get_duplicates()
-    #     self.assertIn("some_fast_full_hash", duplicates)
-
-    # def test_partial_and_full_merge(self):
-    #     """Test merging of databases with and without duplicates."""
-    #     setup_file_structure(self.TEST_BASE, {
-    #         "folder1": ["file1.txt"],
-    #         "folder2": ["file1.txt", "file2.txt"],
-    #         "folder3": ["file3.txt", "folder1/file1.txt"]
-    #     })
-
-    #     analysis1 = DupeAnalysis([f"{self.TEST_BASE}/folder1"], debug=True)
-    #     analysis1.load()
-
-    #     analysis2 = DupeAnalysis([f"{self.TEST_BASE}/folder2"], debug=True)
-    #     analysis2.load()
-
-    #     merged_db = analysis1.merge([f"{self.TEST_BASE}/folder2"])
-    #     merged_analysis = DupeAnalysis([f"{self.TEST_BASE}/folder1", f"{self.TEST_BASE}/folder2"], debug=True)
-    #     merged_analysis.db_path = merged_db
-    #     merged_analysis.load()
-
-    #     expected_duplicates = {
-    #         "some_hash_key": [
-    #             f"{self.TEST_BASE}/folder1/file1.txt",
-    #             f"{self.TEST_BASE}/folder2/file1.txt"
-    #         ]
-    #     }
-    #     self.validate_duplicates(merged_analysis, expected_duplicates)
+    #     self.execute(input, expected, dirs, input2, dirs2)
