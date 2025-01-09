@@ -3,6 +3,7 @@ import os
 import sqlite3
 import itertools
 from pprint import pprint, pformat
+from dupe_utils import ProcessTimer
 
 class DupeAnalysis:
     """Handles file hashing and analysis for directories, optimized with layered hashing."""
@@ -81,14 +82,14 @@ class DupeAnalysis:
             # base case: do analysis
             if len(self.paths) == 1:
                 self.db_path = db_path
-                print(f"Creating database for {self.paths} from {self.db_path}")
+                print(f"Creating database {self.db_path} for {self.paths}")
                 self.conn, self.cursor = DupeAnalysis._init_db(db_path)
                 self.analyze()
                 return
             else:
                 # attempt partial load; search for permutations of dirs
                 # in a greedy way
-                print(f"Searching for any individual databases from {self.paths}")
+                print(f"Searching for any individual databases for {self.paths}")
                 paths_not_loaded = self.paths
                 dbs_found = {}
                 path_count = len(paths_not_loaded) - 1
@@ -124,7 +125,10 @@ class DupeAnalysis:
 
 
     def analyze(self):
-        # print(self.paths)
+        print(f"Analyzing: {self.paths}")
+        timer = ProcessTimer(start=True)
+        print(f"\tPass 0: by filesize", end=' ')
+        subtimer = ProcessTimer(start=True)
         for path in self.paths:
             for dirpath, dirs, filenames in os.walk(path):
                 for filename in filenames:
@@ -138,7 +142,10 @@ class DupeAnalysis:
                 if not dirs and not filenames:
                     self._insert_empty_dir(dirpath)
 
+        print(f"[{subtimer.elapsed_readable()}]")
+
         self._compute_hashes()
+        print(f"\tTotal Analysis Time: {timer.elapsed_readable()}")
 
     def _insert_file(self, path, size, name):
         self.cursor.execute("""
@@ -154,12 +161,22 @@ class DupeAnalysis:
         """, (path,))
         self.conn.commit()
 
-    def _compute_hashes(self, full_hash=False):
+    def _compute_hashes(self):
+        print(f"\tPass 1: by beginning (1kb) hash", end=' ')
+        subtimer = ProcessTimer(start=True)
         self._compute_hash('size', 'beg_hash')
-        self._compute_hash('beg_hash', 'rev_hash')
+        print(f"[{subtimer.elapsed_readable()}]")
 
-        if full_hash:
+        print(f"\tPass 2: by end/mid (1kb) hash", end=' ')
+        subtimer = ProcessTimer(start=True)
+        self._compute_hash('beg_hash', 'rev_hash')
+        print(f"[{subtimer.elapsed_readable()}]")
+
+        if self.complete_hash:
+            print(f"\tPass 3: by full file hash", end=' ')
+            subtimer = ProcessTimer(start=True)
             self._compute_hash('rev_hash', 'full_hash')
+            print(f"[{subtimer.elapsed_readable()}]")
 
     def _compute_hash(self, old, new):
         res = self.cursor.execute(
@@ -167,6 +184,7 @@ class DupeAnalysis:
         if res:
             for row in self.cursor.fetchall():
                 fid, size, path = row
+                # print(path, size, new)
                 hash = DupeAnalysis.get_hash(path, size, new)
                 self._update_file_hashes(fid, hash, new)
 
@@ -199,6 +217,15 @@ class DupeAnalysis:
         self.conn.commit()
 
     @staticmethod
+    def chunk_reader(fobj, chunk_size):
+        """Generator that reads a file in chunks of bytes."""
+        while True:
+            chunk = fobj.read(chunk_size)
+            if not chunk:
+                return
+            yield chunk
+
+    @staticmethod
     def get_hash(filename, filesize, position,
                  chunk=1024, hash=hashlib.sha1):
         hashobj = hash()
@@ -212,7 +239,7 @@ class DupeAnalysis:
                     f.seek(max(0, filesize // 2 - chunk // 2))
                     hashobj.update(f.read(chunk))
                 elif position == 'full_hash':
-                    while chunk := f.read(chunk):
+                    for chunk in DupeAnalysis.chunk_reader(f, chunk):
                         hashobj.update(chunk)
                 else:
                     raise Exception('invalid position')
@@ -249,45 +276,16 @@ class DupeAnalysis:
         self.conn, self.cursor = DupeAnalysis._init_db(self.db_path)
         # Copy data from the databases into the output database
         print(f"Merging existing database for:")
+        timer = ProcessTimer(start=True)
         for db_path, dirs in dbs_found.items():
             print(f"\t {dirs} from {db_path}")
             self._copy_data(db_path)
             self.conn.commit()
 
+        print(f"Recomputing hashes for merged data")
         self._compute_hashes()
+        print(f"\tTotal Merge Time: {timer.elapsed_readable()}")
 
-
-        # # Step 1: Identify potential duplicates across the merged data
-        # cursor.execute("""
-        #     SELECT a.path, a.size, a.beg_hash, a.rev_hash, a.full_hash, b.path
-        #     FROM files a
-        #     JOIN files b
-        #     ON a.size = b.size
-        #     AND a.beg_hash = b.beg_hash
-        #     AND a.rev_hash = b.rev_hash
-        #     AND a.(a.end_hash IS NULL OR a.end_hash = b.end_hash)
-        #     AND a.path != b.path
-        # """)
-        # potential_duplicates = cursor.fetchall()
-
-        # # Step 2: Recompute missing hashes for potential duplicates
-        # for row in potential_duplicates:
-        #     file_a, size, beg_hash, mid_hash, end_hash, full_hash, fast_full_hash, file_b = row
-        #     if mid_hash is None:
-        #         mid_hash = self.get_hash(file_a, position='middle')
-        #         end_hash = self.get_hash(file_a, position='end')
-        #         self._update_file_hashes_in_db(cursor, file_a, mid_hash=mid_hash, end_hash=end_hash)
-
-        #     if full_hash is None and size <= self.file_size_limit:
-        #         full_hash = self.get_hash(file_a, partial=False)
-        #         self._update_file_hashes_in_db(cursor, file_a, full_hash=full_hash)
-        #     elif fast_full_hash is None and size > self.file_size_limit:
-        #         fast_full_hash = f"{beg_hash}:{mid_hash}:{end_hash}"
-        #         self._update_file_hashes_in_db(cursor, file_a, fast_full_hash=fast_full_hash)
-
-        # conn.commit()
-        # conn.close()
-        # return output_db_path
 
     def _update_file_hashes_in_db(self, cursor, path, beg_hash=None, mid_hash=None, end_hash=None, full_hash=None, fast_full_hash=None):
         """
@@ -296,10 +294,8 @@ class DupeAnalysis:
         :param cursor: SQLite cursor for the output database.
         :param path: File path to update.
         :param beg_hash: Beginning hash value.
-        :param mid_hash: Middle hash value.
-        :param end_hash: End hash value.
+        :param rev_hash: End and Middle hash value.
         :param full_hash: Full file hash.
-        :param fast_full_hash: Fast full hash for large files.
         """
         cursor.execute("""
             UPDATE files
@@ -352,26 +348,28 @@ class DupeAnalysis:
         """
         duplicates = {}
 
-        # Fetch files grouped by full hash
-        self.cursor.execute("""
-            SELECT full_hash, GROUP_CONCAT(path)
-            FROM files
-            WHERE full_hash IS NOT NULL
-            GROUP BY full_hash
-            HAVING COUNT(*) > 1
-        """)
-        for row in self.cursor.fetchall():
-            duplicates[row[0]] = row[1].split(',')
+        if self.complete_hash:
+            # Fetch files grouped by full hash
+            self.cursor.execute("""
+                SELECT full_hash, GROUP_CONCAT(path)
+                FROM files
+                WHERE full_hash IS NOT NULL
+                GROUP BY full_hash
+                HAVING COUNT(*) > 1
+            """)
+            for row in self.cursor.fetchall():
+                duplicates[row[0]] = row[1].split(',')
 
-        # Fetch files grouped by fast full hash for large files
-        self.cursor.execute("""
-            SELECT rev_hash, GROUP_CONCAT(path)
-            FROM files
-            WHERE rev_hash IS NOT NULL
-            GROUP BY rev_hash
-            HAVING COUNT(*) > 1
-        """)
-        for row in self.cursor.fetchall():
-            duplicates[row[0]] = row[1].split(',')
+        else:
+            # Fetch files grouped by rev_hash
+            self.cursor.execute("""
+                SELECT rev_hash, GROUP_CONCAT(path)
+                FROM files
+                WHERE rev_hash IS NOT NULL
+                GROUP BY rev_hash
+                HAVING COUNT(*) > 1
+            """)
+            for row in self.cursor.fetchall():
+                duplicates[row[0]] = row[1].split(',')
 
         return duplicates

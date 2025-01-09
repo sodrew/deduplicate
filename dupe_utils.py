@@ -82,6 +82,9 @@ class ProcessTimer:
         self.end = datetime.now()
 
     def elapsed(self):
+        if not self.end:
+            self.end = datetime.now()
+
         return self.end - self.start
 
     def elapsed_readable(self):
