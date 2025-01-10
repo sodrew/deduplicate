@@ -129,7 +129,7 @@ class DupeAnalysis:
     def analyze(self):
         print(f"Analyzing: {self.paths}")
         timer = ProcessTimer(start=True)
-        print(f"\tPass 0: by filesize", end=' ')
+        print(f"\tPass 0: by filesize", end=' ', flush=True)
         subtimer = ProcessTimer(start=True)
         for path in self.paths:
             for dirpath, dirs, filenames in os.walk(path):
@@ -164,18 +164,18 @@ class DupeAnalysis:
         self.conn.commit()
 
     def _compute_hashes(self):
-        print(f"\tPass 1: by beginning (1kb) hash", end=' ')
+        print(f"\tPass 1: by beginning (1kb) hash", end=' ', flush=True)
         subtimer = ProcessTimer(start=True)
         self._compute_hash('size', 'beg_hash')
         print(f"[{subtimer.elapsed_readable()}]")
 
-        print(f"\tPass 2: by end/mid (1kb) hash", end=' ')
+        print(f"\tPass 2: by end/mid (1kb) hash", end=' ', flush=True)
         subtimer = ProcessTimer(start=True)
         self._compute_hash('beg_hash', 'rev_hash')
         print(f"[{subtimer.elapsed_readable()}]")
 
         if self.complete_hash:
-            print(f"\tPass 3: by full file hash", end=' ')
+            print(f"\tPass 3: by full file hash", end=' ', flush=True)
             subtimer = ProcessTimer(start=True)
             self._compute_hash('rev_hash', 'full_hash')
             print(f"[{subtimer.elapsed_readable()}]")
