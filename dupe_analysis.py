@@ -359,7 +359,7 @@ class DupeAnalysis:
             for r in row[1].split(','):
                 path, size = r.split('|')
                 paths.append(path)
-                sizes[path] = size
+                sizes[path] = int(size)
             duplicates[row[0]] = paths
         return duplicates, sizes
 
@@ -370,8 +370,21 @@ class DupeAnalysis:
         :return: Dictionary with duplicates grouped by their full hash or fast full hash.
         """
 
+        ret = None
         if self.complete_hash:
             # Fetch files grouped by full hash
-            return self._query_duplicates('full_hash')
+            ret = self._query_duplicates('full_hash')
         else:
-            return self._query_duplicates('rev_hash')
+            ret =  self._query_duplicates('rev_hash')
+        duplicates, sizes = ret
+
+        empty_dirs = []
+        for row in self.cursor.execute("SELECT path FROM empty_dirs"):
+            empty_dirs.append(row[0])
+
+        return {
+            'dupes': duplicates,
+            'sizes': sizes,
+            'paths': self.paths,
+            'empty_dirs': empty_dirs
+        }

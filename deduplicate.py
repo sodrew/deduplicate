@@ -28,7 +28,7 @@ class DupeFile:
         deletes = set()
         if not self.is_deleted and not self.is_kept:
             deletes.add(self)
-            # print('delete', self.path)
+            # print('delete():', self.path)
             self.is_deleted = True
         return deletes
 
@@ -106,6 +106,13 @@ class DupeDir(DupeFile):
     def has_nondupe_subdirs(self):
         return len(self.subdir_uniqs) > 0
 
+    def has_no_unkept_dupefiles(self):
+        if len(self.file_dupes) > 0:
+            for fd in self.file_dupes:
+                if not fd.is_deleted and not fd.is_kept:
+                    return False
+        return True
+
     def load_fs(self, dupe_files, dupe_dirs):
         all_dupedirs_are_full = False
         for dirpath, dirs, filenames in FileUtil.walk(self.path):
@@ -174,6 +181,27 @@ class DupeDir(DupeFile):
             parent = dd.parent
             prev_dd = dd
 
+    def get_keepable_dirs(self):
+        """
+        Returns self, or the first subdirectory that is a dir
+        containing dupe files that can be kept
+        """
+        if self.count_total < 1:
+            return set()
+            # raise Exception('get_keepable_dirs: called dir without dupes')
+        if not self.is_deleted:
+            print('get_keepable', self.path)
+            if (self.has_no_unkept_dupefiles() or
+                not self.has_no_dupedirs() and self.has_no_dupefiles()):
+                keepable_dupes = set()
+                for sd in self.subdir_dupes:
+                    keepable_dupes.update(sd.get_keepable_dirs())
+                return keepable_dupes
+            else:
+                return set([self])
+
+
+
     @staticmethod
     def max_overlap(str1, str2):
         # Initialize the matrix for dynamic programming
@@ -196,44 +224,67 @@ class DupeDir(DupeFile):
 
     @staticmethod
     def calc_max(dupedir_list, past_kept=None):
-        filtered_list = [d for d in dupedir_list if not d.is_deleted]
+        # need to select the parent directory with highest count.
+        # weighted by past choices, which means the highest kept.
+
+        # once that's selected, figure out which dirs are actually
+        #   keepable and plough through.
+
+        print('calc_max(): dupedir_list\n', pformat(dupedir_list))
+        filtered_list = set()
+        # filter out deletes.
+        # also seek out children that would have actual files to keep
+        for d in dupedir_list:
+            filtered_list.update(d.get_keepable_dirs())
+
         if len(filtered_list) == 0:
             return None
 
-        # pprint(past_kept)
-        # see if we match the
+        print('calc_max(): filtered_list\n', pformat(filtered_list))
         if past_kept:
-            # print('past_kept')
-            # pprint(past_kept)
+            past_kept = set(past_kept)
+            print('calc_max(): past_kept\n', pformat(past_kept))
             # we need to consider past choices as an additional weight
             weighted = defaultdict(list)
             for fl in filtered_list:
+                if fl.path in past_kept:
+                    continue
                 count = 0
                 for pk in past_kept:
                     # print(fl.path, pk, len(DupeDir.max_overlap(fl.path, pk)))
                     count += len(DupeDir.max_overlap(fl.path, pk))
 
                 weighted[count].append(fl)
-            # pprint(weighted)
             keys = sorted(weighted.keys())
             keys.reverse()
-            # print('filtered')
-            # pprint(filtered_list)
+            print('calc_max(): weighted\n', pformat(weighted))
             filtered_list = weighted[keys[0]]
-            # print('weighted')
-            # pprint(weighted)
+            print('calc_max(): weighted_top\n', pformat(filtered_list))
+
+        class reversor:
+            def __init__(self, obj):
+                self.obj = obj
+
+            def __eq__(self, other):
+                return other.obj == self.obj
+
+            def __lt__(self, other):
+                return other.obj < self.obj
 
         # use the sort approach of largest file count
         sorted_arr = sorted(filtered_list,
                             key=lambda d: (
                                 d.count_total,
                                 d.extra_total,
+                                reversor(len(d.path)),
                                 # d.size,
-                                # prefer shallower directory
-                                d.parent[::-1],
+                                # # prefer shallower directory
+                                # d.parent[::-1],
+                                reversor(d.path),
                             ),
                             reverse=True)
-        # print('final_max', sorted_arr[0])
+        print('calc_max(): sorted_arr\n', pformat(sorted_arr))
+        print('calc_max(): final_max\n', sorted_arr[0])
         return sorted_arr[0]
 
     def check_delete(self):
@@ -246,9 +297,14 @@ class DupeDir(DupeFile):
         self.count_total -= 1
         # self.size -= df.size
         self.check_delete()
-        if self.parent in dwd:
-            dd = dwd[self.parent]
-            dd.decrement_dupes(df, dwd)
+        next_parent = self.parent
+        # sometimes we need to skip dirs
+        while next_parent != '/':
+            if next_parent in dwd:
+                dd = dwd[next_parent]
+                dd.decrement_dupes(df, dwd)
+                break
+            next_parent = FileUtil.parent(next_parent)
 
     def increment_dupes(self, df, dwd):
         self.count += 1
@@ -272,7 +328,7 @@ class DupeDir(DupeFile):
             for k in ks:
                 if k.parent in dwd:
                     dd = dwd[k.parent]
-                    dd.increment_dupes(k, dwd)
+                    # dd.increment_dupes(k, dwd)
             for d in ds:
                 # print(d.path)
                 # update who this is deleted by
@@ -320,17 +376,23 @@ class DupeDedupe:
 
     def analyze(self):
         """Compare the two directories for duplicate files."""
-        da = DupeAnalysis(self.dirs, self.debug)
 
         print(f"-------------------------------")
         print(f"Analysis")
         print(f"-------------------------------")
-        (hashes_full, rev_hashes_by_size,
-         paths, empty_dirs, parents) = da.load()
+        da = DupeAnalysis(debug=self.debug)
+        da.load(self.dirs)
+        rets = da.get_duplicates()
         print(f"-------------------------------")
 
-        if self.debug:
-            da.delete_hashes()
+        hashes_full = rets['dupes']
+        rev_hashes_by_size = rets['sizes']
+        empty_dirs = rets['empty_dirs']
+        paths = rets['paths']
+        parents = [FileUtil.parent(path) for path in paths]
+
+        # if self.debug:
+        #     da.delete_hashes()
 
         if not hashes_full:
             return {}
@@ -438,24 +500,31 @@ class DupeDedupe:
 
         # do more passes until dupes are all found
         while len(remaining_dupes) > 0:
-            new_dwd_depth = defaultdict(list)
-            # create new depth lookup
-            for df in remaining_dupes:
-                new_dwd_depth[df.depth - 1].append(dirs_w_dupes[df.parent])
+            # print('looping')
 
-            # print('new_dwd_depth', pformat(new_dwd_depth))
-            ordered_keys = sorted(new_dwd_depth.keys())
-            if ordered_keys:
-                key = next(iter(ordered_keys))
-                start_list = new_dwd_depth[key]
-                # print('start_list', pformat(start_list))
-                d = DupeDir.calc_max(start_list, final_output.keys())
+            # check whether we can find more in the area
+            #  where kepts are already done to further concentrate
+            #  the kepts
+            d = DupeDir.calc_max(start_list, final_output.keys())
+            if not d:
+                new_dwd_depth = defaultdict(list)
+                # create new depth lookup
+                for df in remaining_dupes:
+                    new_dwd_depth[df.depth - 1].append(dirs_w_dupes[df.parent])
+
+                # print('new_dwd_depth', pformat(new_dwd_depth))
+                ordered_keys = sorted(new_dwd_depth.keys())
+                if ordered_keys:
+                    key = next(iter(ordered_keys))
+                    start_list = new_dwd_depth[key]
+                    # print('start_list', pformat(start_list))
+                    d = DupeDir.calc_max(start_list, final_output.keys())
                 # print('calc', d)
-                kept, kepts, dels = d.keep(final_output, delete_lookup, dirs_w_dupes)
-                reviewed.update(kepts)
-                reviewed.update(dels)
-                # print('pass ', debug_count)
-                remaining_dupes = all_dupes - reviewed
+            kept, kepts, dels = d.keep(final_output, delete_lookup, dirs_w_dupes)
+            reviewed.update(kepts)
+            reviewed.update(dels)
+            # print('pass ', debug_count)
+            remaining_dupes = all_dupes - reviewed
 
 
         # pprint(final_output)

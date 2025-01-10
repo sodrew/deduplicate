@@ -194,10 +194,10 @@ class TestDupeAnalysis(unittest.TestCase):
         analysis = DupeAnalysis(debug=True, db_root=self.db_root, complete_hash=complete_hash)
         analysis.load(dirs)
         # pprint(analysis.dump_db())
-        actual, sizes = analysis.get_duplicates()
+        rets = analysis.get_duplicates()
         # pprint(actual)
         analysis.close()
-        return actual
+        return rets['dupes']
 
     def execute_merge(self, dirs1, dirs2, complete_hash):
         analysis1 = DupeAnalysis(debug=True, db_root=self.db_root, complete_hash=complete_hash)
@@ -207,10 +207,10 @@ class TestDupeAnalysis(unittest.TestCase):
         analysis2 = DupeAnalysis(debug=True, db_root=self.db_root, complete_hash=complete_hash)
         analysis2.load(dirs1 + dirs2)
         # pprint(analysis2.dump_db())
-        actual, sizes = analysis2.get_duplicates()
+        rets = analysis2.get_duplicates()
         # pprint(actual)
         analysis2.close()
-        return actual
+        return rets['dupes']
 
     def execute(self, input, expected, dirs, input2=None, dirs2=None, complete_hash=False):
         print(f"\n==={self.func()}===================================================================")
