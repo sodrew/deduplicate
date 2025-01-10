@@ -73,23 +73,25 @@ class DupeAnalysis:
         self.paths = {os.path.abspath(dir) for dir in dirs}
         exists, db_path = DupeAnalysis._exists(self.paths, self.db_root)
 
+
+        print(f"Attempting load of {self.paths}")
         if exists:
             self.db_path = db_path
-            print(f"Loading existing database for {self.paths} from {self.db_path}")
+            print(f"\tLoading existing database for {self.paths} from {self.db_path}")
             self.conn, self.cursor = DupeAnalysis._connect_db(self.db_path)
             return
         else:
             # base case: do analysis
             if len(self.paths) == 1:
                 self.db_path = db_path
-                print(f"Creating database {self.db_path} for {self.paths}")
+                print(f"\tCreating database {self.db_path} for {self.paths}")
                 self.conn, self.cursor = DupeAnalysis._init_db(db_path)
                 self.analyze()
                 return
             else:
                 # attempt partial load; search for permutations of dirs
                 # in a greedy way
-                print(f"Searching for any individual databases for {self.paths}")
+                print(f"\tSearching for any individual databases for {self.paths}")
                 paths_not_loaded = self.paths
                 dbs_found = {}
                 path_count = len(paths_not_loaded) - 1
@@ -278,7 +280,7 @@ class DupeAnalysis:
         print(f"Merging existing database for:")
         timer = ProcessTimer(start=True)
         for db_path, dirs in dbs_found.items():
-            print(f"\t {dirs} from {db_path}")
+            print(f"\t{dirs} from {db_path}")
             self._copy_data(db_path)
             self.conn.commit()
 
@@ -341,35 +343,35 @@ class DupeAnalysis:
 
         return {"files": files, "empty_dirs": empty_dirs}
 
+    def _query_duplicates(self, hash):
+        duplicates = {}
+        sizes = {}
+        self.cursor.execute(f"""
+        SELECT {hash},
+        GROUP_CONCAT(path || '|' || size)
+        FROM files
+        WHERE {hash} IS NOT NULL
+        GROUP BY {hash}
+        HAVING COUNT(id) > 1
+        """)
+        for row in self.cursor.fetchall():
+            paths = []
+            for r in row[1].split(','):
+                path, size = r.split('|')
+                paths.append(path)
+                sizes[path] = size
+            duplicates[row[0]] = paths
+        return duplicates, sizes
+
+
     def get_duplicates(self):
         """
         Identify and return duplicates based on hashes.
         :return: Dictionary with duplicates grouped by their full hash or fast full hash.
         """
-        duplicates = {}
 
         if self.complete_hash:
             # Fetch files grouped by full hash
-            self.cursor.execute("""
-                SELECT full_hash, GROUP_CONCAT(path)
-                FROM files
-                WHERE full_hash IS NOT NULL
-                GROUP BY full_hash
-                HAVING COUNT(*) > 1
-            """)
-            for row in self.cursor.fetchall():
-                duplicates[row[0]] = row[1].split(',')
-
+            return self._query_duplicates('full_hash')
         else:
-            # Fetch files grouped by rev_hash
-            self.cursor.execute("""
-                SELECT rev_hash, GROUP_CONCAT(path)
-                FROM files
-                WHERE rev_hash IS NOT NULL
-                GROUP BY rev_hash
-                HAVING COUNT(*) > 1
-            """)
-            for row in self.cursor.fetchall():
-                duplicates[row[0]] = row[1].split(',')
-
-        return duplicates
+            return self._query_duplicates('rev_hash')

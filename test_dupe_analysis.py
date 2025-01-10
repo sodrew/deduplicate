@@ -194,7 +194,7 @@ class TestDupeAnalysis(unittest.TestCase):
         analysis = DupeAnalysis(debug=True, db_root=self.db_root, complete_hash=complete_hash)
         analysis.load(dirs)
         # pprint(analysis.dump_db())
-        actual = analysis.get_duplicates()
+        actual, sizes = analysis.get_duplicates()
         # pprint(actual)
         analysis.close()
         return actual
@@ -207,7 +207,7 @@ class TestDupeAnalysis(unittest.TestCase):
         analysis2 = DupeAnalysis(debug=True, db_root=self.db_root, complete_hash=complete_hash)
         analysis2.load(dirs1 + dirs2)
         # pprint(analysis2.dump_db())
-        actual = analysis2.get_duplicates()
+        actual, sizes = analysis2.get_duplicates()
         # pprint(actual)
         analysis2.close()
         return actual
@@ -225,228 +225,228 @@ class TestDupeAnalysis(unittest.TestCase):
         print('\n======================================================================')
         self.validate_duplicates(actual, expected)
 
-    # def test_simple_duplicate(self):
-    #     input = [
-    #         'folder1/file1a.txt',
-    #         'folder1/file1b.txt==folder1/file1a.txt',
-    #         'folder1/file2.txt',
-    #         'folder1/file3.txt',
-    #     ]
+    def test_simple_duplicate(self):
+        input = [
+            'folder1/file1a.txt',
+            'folder1/file1b.txt==folder1/file1a.txt',
+            'folder1/file2.txt',
+            'folder1/file3.txt',
+        ]
 
-    #     expected = [
-    #         [
-    #             'folder1/file1a.txt',
-    #             'folder1/file1b.txt',
-    #             ],
-    #     ]
+        expected = [
+            [
+                'folder1/file1a.txt',
+                'folder1/file1b.txt',
+                ],
+        ]
 
-    #     dirs = [
-    #         'folder1'
-    #     ]
+        dirs = [
+            'folder1'
+        ]
 
-    #     self.execute(input, expected, dirs)
+        self.execute(input, expected, dirs)
 
-    # def test_different_sizes(self):
-    #     input = [
-    #         'folder1/file1a.txt:3KB',
-    #         'folder1/file1b.txt==folder1/file1a.txt',
-    #         'folder1/pad1.txt:1KB',
-    #         'folder1/pad2.txt:2KB',
-    #         'folder1/file1c.txt==folder1/file1a.txt:2KB+folder1/pad1.txt',
-    #         'folder1/file1d.txt==folder1/file1a.txt:1KB+folder1/pad2.txt',
-    #         'folder1/file2.txt:32B',
-    #         'folder1/file3.txt:64B',
-    #         'folder1/file4.txt:128B',
-    #         'folder1/file5.txt:256B',
-    #         'folder1/file6.txt:512B',
-    #         'folder1/file7.txt:4KB',
-    #     ]
+    def test_different_sizes(self):
+        input = [
+            'folder1/file1a.txt:3KB',
+            'folder1/file1b.txt==folder1/file1a.txt',
+            'folder1/pad1.txt:1KB',
+            'folder1/pad2.txt:2KB',
+            'folder1/file1c.txt==folder1/file1a.txt:2KB+folder1/pad1.txt',
+            'folder1/file1d.txt==folder1/file1a.txt:1KB+folder1/pad2.txt',
+            'folder1/file2.txt:32B',
+            'folder1/file3.txt:64B',
+            'folder1/file4.txt:128B',
+            'folder1/file5.txt:256B',
+            'folder1/file6.txt:512B',
+            'folder1/file7.txt:4KB',
+        ]
 
-    #     expected = [
-    #         [
-    #             'folder1/file1a.txt',
-    #             'folder1/file1b.txt',
-    #             ],
-    #     ]
+        expected = [
+            [
+                'folder1/file1a.txt',
+                'folder1/file1b.txt',
+                ],
+        ]
 
-    #     dirs = [
-    #         'folder1'
-    #     ]
+        dirs = [
+            'folder1'
+        ]
 
-    #     self.execute(input, expected, dirs)
+        self.execute(input, expected, dirs)
 
-    # def test_separate_dirs(self):
-    #     input = [
-    #         'folder1/file1a.txt',
-    #         'folder2/file1b.txt==folder1/file1a.txt',
-    #     ]
+    def test_separate_dirs(self):
+        input = [
+            'folder1/file1a.txt',
+            'folder2/file1b.txt==folder1/file1a.txt',
+        ]
 
-    #     expected = [
-    #         [
-    #             'folder1/file1a.txt',
-    #             'folder2/file1b.txt',
-    #             ],
-    #     ]
+        expected = [
+            [
+                'folder1/file1a.txt',
+                'folder2/file1b.txt',
+                ],
+        ]
 
-    #     dirs = [
-    #         'folder1',
-    #         'folder2',
-    #     ]
+        dirs = [
+            'folder1',
+            'folder2',
+        ]
 
-    #     self.execute(input, expected, dirs)
+        self.execute(input, expected, dirs)
 
-    # def test_nested_dirs(self):
-    #     input = [
-    #         'folder1/file1a.txt',
-    #         'folder1/subfolder1/file1a.txt==folder1/file1a.txt',
-    #     ]
+    def test_nested_dirs(self):
+        input = [
+            'folder1/file1a.txt',
+            'folder1/subfolder1/file1a.txt==folder1/file1a.txt',
+        ]
 
-    #     expected = [
-    #         [
-    #             'folder1/file1a.txt',
-    #             'folder1/subfolder1/file1a.txt',
-    #             ],
-    #     ]
+        expected = [
+            [
+                'folder1/file1a.txt',
+                'folder1/subfolder1/file1a.txt',
+                ],
+        ]
 
-    #     dirs = [
-    #         'folder1',
-    #     ]
+        dirs = [
+            'folder1',
+        ]
 
-    #     self.execute(input, expected, dirs)
+        self.execute(input, expected, dirs)
 
-    # def test_empty_root_nested_dirs(self):
-    #     input = [
-    #         'folder1/subfolder1/file1a.txt',
-    #         'folder1/subfolder2/file1a.txt==folder1/subfolder1/file1a.txt',
-    #     ]
+    def test_empty_root_nested_dirs(self):
+        input = [
+            'folder1/subfolder1/file1a.txt',
+            'folder1/subfolder2/file1a.txt==folder1/subfolder1/file1a.txt',
+        ]
 
-    #     expected = [
-    #         [
-    #             'folder1/subfolder1/file1a.txt',
-    #             'folder1/subfolder2/file1a.txt',
-    #             ],
-    #     ]
+        expected = [
+            [
+                'folder1/subfolder1/file1a.txt',
+                'folder1/subfolder2/file1a.txt',
+                ],
+        ]
 
-    #     dirs = [
-    #         'folder1',
-    #     ]
+        dirs = [
+            'folder1',
+        ]
 
-    #     self.execute(input, expected, dirs)
+        self.execute(input, expected, dirs)
 
-    # def test_empty_root_nested_dirs2(self):
-    #     input = [
-    #         'folder1/subfolder1/file1a.txt',
-    #         'folder1/subfolder2/file1a.txt==folder1/subfolder1/file1a.txt',
-    #         'folder2/file1a.txt==folder1/subfolder1/file1a.txt',
-    #         'folder2/file2.txt',
-    #     ]
+    def test_empty_root_nested_dirs2(self):
+        input = [
+            'folder1/subfolder1/file1a.txt',
+            'folder1/subfolder2/file1a.txt==folder1/subfolder1/file1a.txt',
+            'folder2/file1a.txt==folder1/subfolder1/file1a.txt',
+            'folder2/file2.txt',
+        ]
 
-    #     expected = [
-    #         [
-    #             'folder1/subfolder1/file1a.txt',
-    #             'folder1/subfolder2/file1a.txt',
-    #             'folder2/file1a.txt',
-    #             ],
-    #     ]
+        expected = [
+            [
+                'folder1/subfolder1/file1a.txt',
+                'folder1/subfolder2/file1a.txt',
+                'folder2/file1a.txt',
+                ],
+        ]
 
-    #     dirs = [
-    #         'folder1',
-    #         'folder2',
-    #     ]
+        dirs = [
+            'folder1',
+            'folder2',
+        ]
 
-    #     self.execute(input, expected, dirs)
+        self.execute(input, expected, dirs)
 
-    # def test_db_merge(self):
-    #     input = [
-    #         'folder1/file1a.txt',
-    #         'folder1/file1b.txt==folder1/file1a.txt',
-    #         'folder1/file2.txt',
-    #     ]
+    def test_db_merge(self):
+        input = [
+            'folder1/file1a.txt',
+            'folder1/file1b.txt==folder1/file1a.txt',
+            'folder1/file2.txt',
+        ]
 
-    #     input2 = [
-    #         'folder2/file1a.txt',
-    #         'folder2/file1b.txt==folder2/file1a.txt',
-    #         'folder2/file2.txt==folder1/file2.txt',
-    #     ]
+        input2 = [
+            'folder2/file1a.txt',
+            'folder2/file1b.txt==folder2/file1a.txt',
+            'folder2/file2.txt==folder1/file2.txt',
+        ]
 
-    #     expected = [
-    #         [
-    #             'folder1/file1a.txt',
-    #             'folder1/file1b.txt',
-    #             ],
-    #         [
-    #             'folder2/file1a.txt',
-    #             'folder2/file1b.txt',
-    #             ],
-    #         [
-    #             'folder1/file2.txt',
-    #             'folder2/file2.txt',
-    #             ],
-    #     ]
+        expected = [
+            [
+                'folder1/file1a.txt',
+                'folder1/file1b.txt',
+                ],
+            [
+                'folder2/file1a.txt',
+                'folder2/file1b.txt',
+                ],
+            [
+                'folder1/file2.txt',
+                'folder2/file2.txt',
+                ],
+        ]
 
-    #     dirs = [
-    #         'folder1',
-    #     ]
+        dirs = [
+            'folder1',
+        ]
 
-    #     dirs2 = [
-    #         'folder2',
-    #     ]
+        dirs2 = [
+            'folder2',
+        ]
 
-    #     self.execute(input, expected, dirs, input2, dirs2)
+        self.execute(input, expected, dirs, input2, dirs2)
 
-    # def test_db_merge2(self):
-    #     input = [
-    #         'folder1/file1a.txt',
-    #         'folder1/file1b.txt==folder1/file1a.txt',
-    #         'folder1/file2.txt',
-    #         'folder2/file1a.txt',
-    #         'folder2/file1b.txt==folder2/file1a.txt',
-    #         'folder2/file3.txt',
-    #     ]
+    def test_db_merge2(self):
+        input = [
+            'folder1/file1a.txt',
+            'folder1/file1b.txt==folder1/file1a.txt',
+            'folder1/file2.txt',
+            'folder2/file1a.txt',
+            'folder2/file1b.txt==folder2/file1a.txt',
+            'folder2/file3.txt',
+        ]
 
-    #     input2 = [
-    #         'folder3/file1a.txt',
-    #         'folder3/file1b.txt==folder3/file1a.txt',
-    #         'folder3/file3.txt==folder1/file2.txt',
-    #         'folder4/file4.txt',
-    #         'folder4/file5.txt==folder3/file1a.txt',
-    #         'folder4/file6.txt==folder2/file3.txt',
-    #     ]
+        input2 = [
+            'folder3/file1a.txt',
+            'folder3/file1b.txt==folder3/file1a.txt',
+            'folder3/file3.txt==folder1/file2.txt',
+            'folder4/file4.txt',
+            'folder4/file5.txt==folder3/file1a.txt',
+            'folder4/file6.txt==folder2/file3.txt',
+        ]
 
-    #     expected = [
-    #         [
-    #             'folder1/file1a.txt',
-    #             'folder1/file1b.txt',
-    #             ],
-    #         [
-    #             'folder2/file1a.txt',
-    #             'folder2/file1b.txt',
-    #             ],
-    #         [
-    #             'folder3/file1a.txt',
-    #             'folder3/file1b.txt',
-    #             'folder4/file5.txt',
-    #             ],
-    #         [
-    #             'folder1/file2.txt',
-    #             'folder3/file3.txt',
-    #             ],
-    #         [
-    #             'folder2/file3.txt',
-    #             'folder4/file6.txt',
-    #             ],
+        expected = [
+            [
+                'folder1/file1a.txt',
+                'folder1/file1b.txt',
+                ],
+            [
+                'folder2/file1a.txt',
+                'folder2/file1b.txt',
+                ],
+            [
+                'folder3/file1a.txt',
+                'folder3/file1b.txt',
+                'folder4/file5.txt',
+                ],
+            [
+                'folder1/file2.txt',
+                'folder3/file3.txt',
+                ],
+            [
+                'folder2/file3.txt',
+                'folder4/file6.txt',
+                ],
 
-    #     ]
+        ]
 
-    #     dirs = [
-    #         'folder1', 'folder2',
-    #     ]
+        dirs = [
+            'folder1', 'folder2',
+        ]
 
-    #     dirs2 = [
-    #         'folder3', 'folder4',
-    #     ]
+        dirs2 = [
+            'folder3', 'folder4',
+        ]
 
-    #     self.execute(input, expected, dirs, input2, dirs2)
+        self.execute(input, expected, dirs, input2, dirs2)
 
     def test_complete_hash(self):
         input = [
