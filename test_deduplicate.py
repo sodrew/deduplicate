@@ -195,216 +195,216 @@ class DuplicateDeletionTest(unittest.TestCase):
                 raise has_exception
 
 
-    # def test_simple(self):
-    #     input = [
-    #         'folder1/file1_a',
-    #         'folder1/file1_b',
-    #         'folder2/file2',
-    #         ]
+    def test_simple(self):
+        input = [
+            'folder1/file1_a',
+            'folder1/file1_b',
+            'folder2/file2',
+            ]
 
-    #     output = [
-    #         'folder1/file1',
-    #         'folder2/file2',
-    #         ]
+        output = [
+            'folder1/file1',
+            'folder2/file2',
+            ]
 
-    #     self.execute(input, output)
+        self.execute(input, output)
 
 
-    # def test_empty_dirs(self):
-    #     input = [
-    #         'folder1/',
-    #         'folder2/',
-    #         ]
+    def test_empty_dirs(self):
+        input = [
+            'folder1/',
+            'folder2/',
+            ]
 
-    #     output = [
-    #         'folder1/',
-    #         'folder2/',
-    #         ]
+        output = [
+            'folder1/',
+            'folder2/',
+            ]
 
-    #     self.execute(input, output)
+        self.execute(input, output)
 
-    # def test_sep_directories(self):
-    #     input = [
-    #         'folder1/file1',
-    #         'folder1/file2',
-    #         'folder2/file1',
-    #         'folder2/file2',
-    #         ]
+    def test_sep_directories(self):
+        input = [
+            'folder1/file1',
+            'folder1/file2',
+            'folder2/file1',
+            'folder2/file2',
+            ]
 
-    #     output = [
-    #         'folder1/file1',
-    #         'folder1/file2',
-    #         ]
+        output = [
+            'folder1/file1',
+            'folder1/file2',
+            ]
 
-    #     self.execute(input, output)
+        self.execute(input, output)
 
-    # def test_superset(self):
-    #     input = [
-    #         'folder1/file1',
-    #         'folder1/file2',
-    #         'folder1/file3',
-    #         'folder2/file1',
-    #         'folder2/file2',
-    #         ]
+    def test_superset(self):
+        input = [
+            'folder1/file1',
+            'folder1/file2',
+            'folder1/file3',
+            'folder2/file1',
+            'folder2/file2',
+            ]
 
-    #     output = [
-    #         'folder1/file1',
-    #         'folder1/file2',
-    #         'folder1/file3',
-    #         ]
+        output = [
+            'folder1/file1',
+            'folder1/file2',
+            'folder1/file3',
+            ]
 
-    #     self.execute(input, output)
+        self.execute(input, output)
 
-    # def test_superset2(self):
-    #     input = [
-    #         'folder1/file1',
-    #         'folder1/file2',
-    #         'folder2/file1',
-    #         'folder2/file2',
-    #         'folder2/file3',
-    #         ]
+    def test_superset2(self):
+        input = [
+            'folder1/file1',
+            'folder1/file2',
+            'folder2/file1',
+            'folder2/file2',
+            'folder2/file3',
+            ]
 
-    #     output = [
-    #         'folder2/file1',
-    #         'folder2/file2',
-    #         'folder2/file3',
-    #         ]
+        output = [
+            'folder2/file1',
+            'folder2/file2',
+            'folder2/file3',
+            ]
 
-    #     self.execute(input, output)
+        self.execute(input, output)
 
-    # def test_nested(self):
-    #     input = [
-    #         'folder1/file1',
-    #         'folder1/file2',
-    #         'folder1/child1/file1',
-    #         'folder1/child1/file2',
-    #         'folder2/file1',
-    #         'folder2/file2',
-    #         ]
+    def test_nested(self):
+        input = [
+            'folder1/file1',
+            'folder1/file2',
+            'folder1/child1/file1',
+            'folder1/child1/file2',
+            'folder2/file1',
+            'folder2/file2',
+            ]
 
-    #     output = [
-    #         'folder1/file1',
-    #         'folder1/file2',
-    #         ]
+        output = [
+            'folder1/file1',
+            'folder1/file2',
+            ]
 
-    #     self.execute(input, output)
+        self.execute(input, output)
 
-    # def test_nested2(self):
-    #     input = [
-    #         'folder1/file1',
-    #         'folder1/file2',
-    #         'folder1/child1/file1',
-    #         'folder1/child1/file2',
-    #         'folder1/child2/file1',
-    #         'folder1/child2/file2',
-    #         'folder2/file1',
-    #         'folder2/file2',
-    #         'folder2/child1/file1',
-    #         'folder2/child2/file2',
-    #         ]
+    def test_nested2(self):
+        input = [
+            'folder1/file1',
+            'folder1/file2',
+            'folder1/child1/file1',
+            'folder1/child1/file2',
+            'folder1/child2/file1',
+            'folder1/child2/file2',
+            'folder2/file1',
+            'folder2/file2',
+            'folder2/child1/file1',
+            'folder2/child2/file2',
+            ]
 
-    #     output = [
-    #         'folder1/file1',
-    #         'folder1/file2',
-    #         ]
+        output = [
+            'folder1/file1',
+            'folder1/file2',
+            ]
 
-    #     self.execute(input, output)
+        self.execute(input, output)
 
-    # def test_nested3(self):
-    #     input = [
-    #         'folder1/file1',
-    #         'folder1/file2',
-    #         'folder1/child1/file1',
-    #         'folder1/child1/file2',
-    #         'folder1/child2/file1',
-    #         'folder1/child2/file2',
-    #         'folder1/child2/file3',
-    #         'folder2/file1',
-    #         'folder2/file2',
-    #         'folder2/child1/file1',
-    #         'folder2/child2/file2',
-    #         ]
+    def test_nested3(self):
+        input = [
+            'folder1/file1',
+            'folder1/file2',
+            'folder1/child1/file1',
+            'folder1/child1/file2',
+            'folder1/child2/file1',
+            'folder1/child2/file2',
+            'folder1/child2/file3',
+            'folder2/file1',
+            'folder2/file2',
+            'folder2/child1/file1',
+            'folder2/child2/file2',
+            ]
 
-    #     output = [
-    #         'folder1/file1',
-    #         'folder1/file2',
-    #         'folder1/child2/file3',
-    #         ]
+        output = [
+            'folder1/file1',
+            'folder1/file2',
+            'folder1/child2/file3',
+            ]
 
-    #     self.execute(input, output)
+        self.execute(input, output)
 
-    # def test_nested_deep(self):
-    #     input = [
-    #         'folder1/file1',
-    #         'folder1/file2',
-    #         'folder1/child1/file1',
-    #         'folder1/child1/file2',
-    #         'folder1/child2/file1',
-    #         'folder1/child2/file2',
-    #         'folder1/child2/grand1/file1',
-    #         'folder1/child2/grand1/file2',
-    #         'folder1/child2/grand1/greatgrand1/file1',
-    #         'folder1/child2/grand1/greatgrand1/file2',
-    #         'folder2/file1',
-    #         'folder2/file2',
-    #         'folder2/child1/file1',
-    #         'folder2/child2/file2',
-    #         'folder2/child2/grand1/greatgrand1/file2',
-    #         ]
+    def test_nested_deep(self):
+        input = [
+            'folder1/file1',
+            'folder1/file2',
+            'folder1/child1/file1',
+            'folder1/child1/file2',
+            'folder1/child2/file1',
+            'folder1/child2/file2',
+            'folder1/child2/grand1/file1',
+            'folder1/child2/grand1/file2',
+            'folder1/child2/grand1/greatgrand1/file1',
+            'folder1/child2/grand1/greatgrand1/file2',
+            'folder2/file1',
+            'folder2/file2',
+            'folder2/child1/file1',
+            'folder2/child2/file2',
+            'folder2/child2/grand1/greatgrand1/file2',
+            ]
 
-    #     output = [
-    #         'folder1/file1',
-    #         'folder1/file2',
-    #         ]
+        output = [
+            'folder1/file1',
+            'folder1/file2',
+            ]
 
-    #     self.execute(input, output)
+        self.execute(input, output)
 
-    # def test_nested_deep2(self):
-    #     input = [
-    #         'folder1/file1',
-    #         'folder1/file2',
-    #         'folder1/child1/file1',
-    #         'folder1/child1/file2',
-    #         'folder1/child2/file1',
-    #         'folder1/child2/file2',
-    #         'folder1/child2/grand1/file1',
-    #         'folder1/child2/grand1/file2',
-    #         'folder1/child2/grand1/greatgrand1/',
-    #         'folder2/file1',
-    #         'folder2/file2',
-    #         'folder2/child1/file1',
-    #         'folder2/child2/file2',
-    #         'folder2/child2/grand1/greatgrand1/file2',
-    #         ]
+    def test_nested_deep2(self):
+        input = [
+            'folder1/file1',
+            'folder1/file2',
+            'folder1/child1/file1',
+            'folder1/child1/file2',
+            'folder1/child2/file1',
+            'folder1/child2/file2',
+            'folder1/child2/grand1/file1',
+            'folder1/child2/grand1/file2',
+            'folder1/child2/grand1/greatgrand1/',
+            'folder2/file1',
+            'folder2/file2',
+            'folder2/child1/file1',
+            'folder2/child2/file2',
+            'folder2/child2/grand1/greatgrand1/file2',
+            ]
 
-    #     output = [
-    #         'folder1/file1',
-    #         'folder1/file2',
-    #         ]
+        output = [
+            'folder1/file1',
+            'folder1/file2',
+            ]
 
-    #     self.execute(input, output)
+        self.execute(input, output)
 
-    # def test_nested_deep3(self):
-    #     input = [
-    #         'folder1/file1',
-    #         'folder1/file2',
-    #         'folder1/child1/file1',
-    #         'folder1/child1/file2',
-    #         'folder1/child2/file3',
-    #         'folder2/file1',
-    #         'folder2/file2',
-    #         'folder2/child2/grand2/file1',
-    #         'folder2/child2/grand2/file2',
-    #         'folder2/child1/grand1/file3',
-    #         ]
+    def test_nested_deep3(self):
+        input = [
+            'folder1/file1',
+            'folder1/file2',
+            'folder1/child1/file1',
+            'folder1/child1/file2',
+            'folder1/child2/file3',
+            'folder2/file1',
+            'folder2/file2',
+            'folder2/child2/grand2/file1',
+            'folder2/child2/grand2/file2',
+            'folder2/child1/grand1/file3',
+            ]
 
-    #     output = [
-    #         'folder1/file1',
-    #         'folder1/file2',
-    #         'folder1/child2/file3',
-    #         ]
+        output = [
+            'folder1/file1',
+            'folder1/file2',
+            'folder1/child2/file3',
+            ]
 
-    #     self.execute(input, output)
+        self.execute(input, output)
 
     def test_nested_deep4(self):
         input = [
@@ -422,97 +422,97 @@ class DuplicateDeletionTest(unittest.TestCase):
 
         self.execute(input, output)
 
-    # def test_nested_deep5(self):
-    #     input = [
-    #         'folder1/child1/file1',
-    #         'folder1/child1/file2',
-    #         'folder1/child1/file3',
-    #         'folder2/child1/grand1/file1',
-    #         'folder2/child2/grand2/file2',
-    #         'folder2/child3/grand2/file3',
-    #         ]
+    def test_nested_deep5(self):
+        input = [
+            'folder1/child1/file1',
+            'folder1/child1/file2',
+            'folder1/child1/file3',
+            'folder2/child1/grand1/file1',
+            'folder2/child2/grand2/file2',
+            'folder2/child3/grand2/file3',
+            ]
 
-    #     output = [
-    #         'folder1/child1/file1',
-    #         'folder1/child1/file2',
-    #         'folder1/child1/file3',
-    #         ]
+        output = [
+            'folder1/child1/file1',
+            'folder1/child1/file2',
+            'folder1/child1/file3',
+            ]
 
-    #     self.execute(input, output)
+        self.execute(input, output)
 
-    # def test_nested_deep6(self):
-    #     input = [
-    #         'folder1/child1/grand1/file1',
-    #         'folder1/child1/grand2/file2',
-    #         'folder1/child1/grand3/file3',
-    #         'folder2/child1/grand1/great1/file1',
-    #         'folder2/child2/grand2/great1/file2',
-    #         'folder2/child3/grand2/great1/file3',
-    #         ]
+    def test_nested_deep6(self):
+        input = [
+            'folder1/child1/grand1/file1',
+            'folder1/child1/grand2/file2',
+            'folder1/child1/grand3/file3',
+            'folder2/child1/grand1/great1/file1',
+            'folder2/child2/grand2/great1/file2',
+            'folder2/child3/grand2/great1/file3',
+            ]
 
-    #     output = [
-    #         'folder1/child1/grand1/file1',
-    #         'folder1/child1/grand2/file2',
-    #         'folder1/child1/grand3/file3',
-    #         ]
+        output = [
+            'folder1/child1/grand1/file1',
+            'folder1/child1/grand2/file2',
+            'folder1/child1/grand3/file3',
+            ]
 
-    #     self.execute(input, output)
+        self.execute(input, output)
 
-    # def test_separate_dupes(self):
-    #     input = [
-    #         'folder1/child1/file1',
-    #         'folder1/child1/file2',
-    #         'folder1/child1/file3',
-    #         'folder1/child2/file4',
-    #         'folder1/child2/file5',
-    #         'folder1/child2/file6',
-    #         'folder2/child2/grand1/file1',
-    #         'folder2/child2/grand2/file2',
-    #         'folder2/child2/grand3/file3',
-    #         'folder2/child2/grand4/file4',
-    #         'folder2/child2/grand5/file5',
-    #         'folder2/file6',
-    #         ]
+    def test_separate_dupes(self):
+        input = [
+            'folder1/child1/file1',
+            'folder1/child1/file2',
+            'folder1/child1/file3',
+            'folder1/child2/file4',
+            'folder1/child2/file5',
+            'folder1/child2/file6',
+            'folder2/child2/grand1/file1',
+            'folder2/child2/grand2/file2',
+            'folder2/child2/grand3/file3',
+            'folder2/child2/grand4/file4',
+            'folder2/child2/grand5/file5',
+            'folder2/file6',
+            ]
 
-    #     output = [
-    #         'folder1/child1/file1',
-    #         'folder1/child1/file2',
-    #         'folder1/child1/file3',
-    #         'folder1/child2/file4',
-    #         'folder1/child2/file5',
-    #         'folder1/child2/file6',
-    #         ]
+        output = [
+            'folder2/child2/grand1/file1',
+            'folder2/child2/grand2/file2',
+            'folder2/child2/grand3/file3',
+            'folder2/child2/grand4/file4',
+            'folder2/child2/grand5/file5',
+            'folder2/file6',
+            ]
 
-    #     self.execute(input, output)
+        self.execute(input, output)
 
-    # def test_separate_dupes2(self):
-    #     input = [
-    #         'folder1/child1/file1',
-    #         'folder1/child1/file2',
-    #         'folder1/child1/file3',
-    #         'folder1/child2/file4',
-    #         'folder1/child2/file5',
-    #         'folder1/child2/file6',
-    #         'folder2/child1/grand1/file1',
-    #         'folder2/child1/grand2/file2',
-    #         'folder2/child1/grand3/file3',
-    #         'folder2/child1/grand4/file4',
-    #         'folder2/child2/grand5/file5',
-    #         'folder2/file6',
-    #         'folder2/file7',
-    #         ]
+    def test_separate_dupes2(self):
+        input = [
+            'folder1/child1/file1',
+            'folder1/child1/file2',
+            'folder1/child1/file3',
+            'folder1/child2/file4',
+            'folder1/child2/file5',
+            'folder1/child2/file6',
+            'folder2/child1/grand1/file1',
+            'folder2/child1/grand2/file2',
+            'folder2/child1/grand3/file3',
+            'folder2/child1/grand4/file4',
+            'folder2/child2/grand5/file5',
+            'folder2/file6',
+            'folder2/file7',
+            ]
 
-    #     output = [
-    #         'folder1/child1/file1',
-    #         'folder1/child1/file2',
-    #         'folder1/child1/file3',
-    #         'folder1/child2/file4',
-    #         'folder1/child2/file5',
-    #         'folder1/child2/file6',
-    #         'folder2/file7',
-    #         ]
+        output = [
+            'folder2/child1/grand1/file1',
+            'folder2/child1/grand2/file2',
+            'folder2/child1/grand3/file3',
+            'folder2/child1/grand4/file4',
+            'folder2/child2/grand5/file5',
+            'folder2/file6',
+            'folder2/file7',
+            ]
 
-    #     self.execute(input, output, output_detail=True)
+        self.execute(input, output, output_detail=True)
 
 
 if __name__ == "__main__":
