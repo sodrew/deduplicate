@@ -424,6 +424,7 @@ class DupeDedupe:
         rev_hashes_by_size = rets['sizes']
         empty_dirs = rets['empty_dirs']
         paths = rets['paths']
+        zeroes = rets['zeroes']
         parents = [FileUtil.parent(path) for path in paths]
 
         # if self.debug:
@@ -450,8 +451,8 @@ class DupeDedupe:
 
         # create the dupe file objects
         for hash, files in hashes_full.items():
-            if len(files) < 2:
-                continue
+            # if len(files) < 2:
+            #     continue
             obj_list = set()
             for path in files:
                 if path not in dupefiles:
@@ -540,7 +541,7 @@ class DupeDedupe:
             #  where kepts are already done to further concentrate
             #  the kepts
             if self.depth_first:
-                print('here')
+                # print('here')
                 d = DupeDir.calc_max(kept.parent, final_output.keys())
             else:
                 d = DupeDir.calc_max(start_list, final_output.keys())

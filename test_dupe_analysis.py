@@ -20,9 +20,12 @@ class TestDupeAnalysis(unittest.TestCase):
         if os.path.exists(self.test_root):
             shutil.rmtree(self.test_root)
         os.makedirs(self.test_root)
+
+        print('here', self.db_root)
         self.db_root = os.path.abspath(self.db_root)
         if os.path.exists(self.db_root):
             shutil.rmtree(self.db_root)
+        print('here', self.db_root)
         os.makedirs(self.db_root)
 
     def func(self):
@@ -191,7 +194,9 @@ class TestDupeAnalysis(unittest.TestCase):
         # self.assertEqual(e-a, set(), f"\nmissing:{pformat(e-a)}")
 
     def execute_default(self, dirs, complete_hash):
-        analysis = DupeAnalysis(debug=True, db_root=self.db_root, complete_hash=complete_hash)
+        analysis = DupeAnalysis(debug=self.debug,
+                                complete_hash=complete_hash,
+                                db_root=self.db_root)
         analysis.load(dirs)
         # pprint(analysis.dump_db())
         rets = analysis.get_duplicates()
@@ -200,12 +205,17 @@ class TestDupeAnalysis(unittest.TestCase):
         return rets['dupes']
 
     def execute_merge(self, dirs1, dirs2, complete_hash):
-        analysis1 = DupeAnalysis(debug=True, db_root=self.db_root, complete_hash=complete_hash)
+        analysis1 = DupeAnalysis(debug=self.debug,
+                                 complete_hash=complete_hash,
+                                 db_root=self.db_root)
         analysis1.load(dirs1)
         # pprint(analysis1.dump_db())
         analysis1.close()
-        analysis2 = DupeAnalysis(debug=True, db_root=self.db_root, complete_hash=complete_hash)
-        analysis2.load(dirs1 + dirs2)
+        analysis2 = DupeAnalysis(debug=self.debug,
+                                 complete_hash=complete_hash,
+                                 db_root=self.db_root)
+        dirs1.extend(dirs2)
+        analysis2.load(dirs1)
         # pprint(analysis2.dump_db())
         rets = analysis2.get_duplicates()
         # pprint(actual)
@@ -468,7 +478,6 @@ class TestDupeAnalysis(unittest.TestCase):
             [
                 'folder1/file1a.txt',
                 'folder1/file1b.txt',
-                # 'folder1/file1c.txt',
                 ],
         ]
 
@@ -476,7 +485,6 @@ class TestDupeAnalysis(unittest.TestCase):
             'folder1'
         ]
 
-        # self.execute(input, expected, dirs)
         self.execute(input, expected, dirs, complete_hash=True)
 
     def test_complete_hash_false(self):
