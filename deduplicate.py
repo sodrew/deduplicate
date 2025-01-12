@@ -118,36 +118,36 @@ class DupeDir(DupeFile):
                     return False
         return True
 
-    def load_fs(self, dupe_files, dupe_dirs):
+    def load_fs(self, da, dupe_files, dupe_dirs):
         all_dupedirs_are_full = False
-        for dirpath, dirs, filenames in FileUtil.walk(self.path):
-            for filename in filenames:
-                full_path = FileUtil.join(dirpath, filename)
-                if full_path in dupe_files:
-                    df = dupe_files[full_path]
-                    self.file_dupes.add(df)
-                    self.size += df.size
-                    self.count += 1
-                else:
-                    self.file_uniqs.append(full_path)
-                    self.extra += 1
-            self.count_total += self.count
-            self.extra_total += self.extra
-            for dir in dirs:
-                full_path = FileUtil.join(dirpath, dir)
-                if full_path in dupe_dirs:
-                    # print('fp', full_path)
-                    dd = dupe_dirs[full_path]
-                    self.subdir_dupes.add(dd)
-                    # dd.parent_dd = self
-                    all_dupedirs_are_full = all_dupedirs_are_full and dd.is_full_dupe
-                    self.count_total += dd.count_total
-                    self.size += dd.size
-                else:
-                    self.subdir_uniqs.append(full_path)
-                    self.extra_total += 1
-            # don't recurse through sub directories
-            break
+        ret = da.get_dir_info(self.path)
+        filenames = ret['files']
+        dirs = ret['subdirs']
+        for filename in filenames:
+            full_path = filename
+            if full_path in dupe_files:
+                df = dupe_files[full_path]
+                self.file_dupes.add(df)
+                self.size += df.size
+                self.count += 1
+            else:
+                self.file_uniqs.append(full_path)
+                self.extra += 1
+        self.count_total += self.count
+        self.extra_total += self.extra
+        for dir in dirs:
+            full_path = dir
+            if full_path in dupe_dirs:
+                # print('fp', full_path)
+                dd = dupe_dirs[full_path]
+                self.subdir_dupes.add(dd)
+                # dd.parent_dd = self
+                all_dupedirs_are_full = all_dupedirs_are_full and dd.is_full_dupe
+                self.count_total += dd.count_total
+                self.size += dd.size
+            else:
+                self.subdir_uniqs.append(full_path)
+                self.extra_total += 1
 
         # we do this next part under the assumption
         #  that are doing a leaf first approach
@@ -388,16 +388,17 @@ class DupeDir(DupeFile):
             else:
                 return (None, set(), set())
 
-    def check_single_parent(self):
+    def check_single_parent(self, da):
         # print('checking', self.path, self.parent)
-        for dirpath, dirs, filenames in FileUtil.walk(self.parent):
-            if len(filenames) == 0 and len(dirs) == 1:
-                full_path = FileUtil.join(dirpath, dirs[0])
-                if full_path == self.path:
-                    dd = DupeDir(self.parent, None)
-                    dd.subdir_dupes.add(self)
-                    return dd
-            break
+        ret = da.get_dir_info(self.parent)
+        filenames = ret['files']
+        dirs = ret['subdirs']
+        if len(filenames) == 0 and len(dirs) == 1:
+            full_path = dirs[0]
+            if full_path == self.path:
+                dd = DupeDir(self.parent, None)
+                dd.subdir_dupes.add(self)
+                return dd
         return None
 
 
@@ -469,7 +470,7 @@ class DupeDedupe:
                     dd = DupeDir(parent, None)
                     dirs_w_dupes[parent] = dd
                     dirs_w_dupes_by_depth[dd.depth].append(dd)
-                    sp = dd.check_single_parent()
+                    sp = dd.check_single_parent(da)
                     # print('sp', sp)
                     if sp:
                         dirs_w_dupes[sp.path] = sp
@@ -511,7 +512,7 @@ class DupeDedupe:
 
         for key in rev_ordered_keys:
             for dd in dirs_w_dupes_by_depth[key]:
-                dd.load_fs(dupefiles, dirs_w_dupes)
+                dd.load_fs(da, dupefiles, dirs_w_dupes)
                 # print(dd.size, dd.path)
 
         # get the highest directory level of each dir family of dupes
