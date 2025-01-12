@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import argparse
 import sys
+import csv
 from collections import defaultdict
 from pprint import pprint, pformat
 from dupe_utils import FileUtil, ProcessTimer
@@ -418,6 +419,7 @@ class DupeDedupe:
         da = DupeAnalysis(debug=self.debug)
         da.load(self.dirs)
         rets = da.get_duplicates()
+
         print(f"-------------------------------")
 
         hashes_full = rets['dupes']
@@ -619,30 +621,40 @@ class DupeDedupe:
             if not final_dirs:
                 print("\nNo duplicates found")
             else:
-                all_sizes = 0
-                # output the directories
-                ordered_keys = sorted(final_dirs)
-                all_deletes = set()
-                for dpath in ordered_keys:
-                   print(f"\nKeep dir:   {dpath}")
-                   keeps, deletes, sizes = final_dirs[dpath]
-                   for k in keeps:
-                       print(f"  keep file:{k.path}")
-                   print(f"  Deleting: {FileUtil.human_readable(sizes)}")
-                   size = 0
-                   for d in deletes:
-                       print(f"            {d.path}")
-                       size += d.size
-                       # print(d.path, size)
-                       if exec_delete:
-                           FileUtil.delete(d.path)
-                   all_deletes.update(deletes)
-                   all_sizes += size
-                self.timer.stop()
-                print(f'Total Execution Time: {self.timer.elapsed_readable()}')
-                print(f'\nConsolidated delete list: {FileUtil.human_readable(all_sizes)}')
-                for d in sorted(all_deletes, key=lambda d: d.path):
-                   print(f"{d.path}|{FileUtil.human_readable(d.size)}")
+                with open('dupe_list.csv', 'w', newline='') as csvfile:
+                    csvwriter = csv.writer(csvfile)
+                    csvwriter.writerow(['delete', 'keep',
+                                        'size (MB)', 'size(B)'])
+                    all_sizes = 0
+                    # output the directories
+                    ordered_keys = sorted(final_dirs)
+                    all_deletes = set()
+                    for dpath in ordered_keys:
+                       print(f"\nKeep dir:   {dpath}")
+                       keeps, deletes, sizes = final_dirs[dpath]
+                       for k in keeps:
+                           print(f"  keep file:{k.path}")
+                       print(f"  Deleting: {FileUtil.human_readable(sizes)}")
+                       size = 0
+                       for d in deletes:
+                           print(f"            {d.path}")
+                           size += d.size
+                           # print(d.path, size)
+                           if exec_delete:
+                               FileUtil.delete(d.path)
+                           csvwriter.writerow([d.path, dpath, "%.02f" % (d.size/1024/1024), d.size])
+                       all_deletes.update(deletes)
+                       all_sizes += size
+                    self.timer.stop()
+                    print(f'Total Execution Time: {self.timer.elapsed_readable()}')
+                    print(f'\nConsolidated delete list: {FileUtil.human_readable(all_sizes)}')
+                with open('deletes.csv', 'w', newline='') as csvfile:
+                    csvwriter = csv.writer(csvfile)
+                    csvwriter.writerow(['delete', 'size (MB)', 'size (B)'])
+                    for d in sorted(all_deletes, key=lambda d: d.path):
+                        csvwriter.writerow([d.path,
+                                            "%.02f" % (d.size/1024/1024),
+                                            d.size])
 
         except Exception as e:
             print(f"**ERROR**: Exception:{type(e).__name__} {e}", file=sys.stderr)
