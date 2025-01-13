@@ -418,7 +418,7 @@ class DupeDedupe:
         self.timer = ProcessTimer(start=True)
         self.synology = synology
 
-    def analyze(self):
+    def analyze(self, analyze_only=False):
         """Compare the two directories for duplicate files."""
 
         print(f"-------------------------------")
@@ -426,13 +426,17 @@ class DupeDedupe:
         print(f"-------------------------------")
         excludes = []
         if self.synology:
-            excludes = ['*@eaDir*', '*/.*']
+            excludes = ['*/@*', '*/.*']
         da = DupeAnalysis(debug=self.debug, excludes=excludes)
         da.load(self.dirs)
-        rets = da.get_duplicates()
 
         print(f"-------------------------------")
 
+        if analyze_only:
+            print('Analysis complete, not performing recommendation')
+            return {'junk': 1}
+
+        rets = da.get_duplicates()
         hashes_full = rets['dupes']
         rev_hashes_by_size = rets['sizes']
         empty_dirs = rets['empty_dirs']
@@ -655,16 +659,17 @@ class DupeDedupe:
 
         return final_output
 
-    def execute(self, exec_delete=False):
+    def execute(self, exec_delete=False, analyze_only=False):
         try:
-            final_dirs = self.analyze()
-
-            print(f"-------------------------------")
-            print(f"Results")
-            print(f"-------------------------------")
+            final_dirs = self.analyze(analyze_only)
             if not final_dirs:
                 print("\nNo duplicates found")
+            elif analyze_only:
+                return
             else:
+                print(f"-------------------------------")
+                print(f"Results")
+                print(f"-------------------------------")
                 print('Writing out report to dupe_list.csv')
                 with open('dupe_list.csv', 'w', newline='') as csvfile:
                     csvwriter = csv.writer(csvfile)
@@ -712,6 +717,7 @@ if __name__ == "__main__":
     parser.add_argument('--debug', action='store_true', help="Debug mode which deletes analyses and has extra printed detail.")
     parser.add_argument('--delete', action='store_true', help="Delete duplicates in a directory.")
     parser.add_argument('--synology', action='store_true', help="Ignores dot and @eaDir files/dirs on synology NAS.")
+    parser.add_argument('--analyze', action='store_true', help="Only performs dupe analysis, not any recommendation.")
     # parser.add_argument('--merge', metavar='DIR', help="Merge a specific directory and save the results -- no analysis provided.")
 
     args = parser.parse_args()
@@ -723,7 +729,7 @@ if __name__ == "__main__":
         #     da1.merge(da2)
         # else:
         da = DupeDedupe(args.dirs, args.debug, synology=args.synology)
-        da.execute(args.delete)
+        da.execute(exec_delete=args.delete, analyze_only=args.analyze)
     else:
         parser.print_help()
 

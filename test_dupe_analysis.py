@@ -546,5 +546,5 @@ class TestDupeAnalysis(unittest.TestCase):
             'folder1'
         ]
 
-        self.execute(input, expected, dirs, excludes=['*@eaDir*', '*/.*'])
+        self.execute(input, expected, dirs, excludes=['*/@*', '*/.*'])
 
