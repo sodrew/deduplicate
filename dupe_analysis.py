@@ -249,7 +249,7 @@ class DupeAnalysis:
             with subprocess.Popen(['du', '-sb', path],
                                     stdout=subprocess.PIPE) as proc:
                 try:
-                    output, errs = proc.communicate(timeout=15)
+                    output, errs = proc.communicate(timeout=60)
                 except subprocess.TimeoutExpired:
                     proc.kill()
                     output, errs = proc.communicate()
