@@ -411,11 +411,12 @@ class DupeDir(DupeFile):
 class DupeDedupe:
     """Determines optimal delete for DupeAnalysis instances."""
 
-    def __init__(self, dirs, depth_first=True, debug=False):
+    def __init__(self, dirs, debug=False, depth_first=True, synology=False):
         self.dirs = dirs
         self.debug = debug
         self.depth_first = depth_first
         self.timer = ProcessTimer(start=True)
+        self.synology = synology
 
     def analyze(self):
         """Compare the two directories for duplicate files."""
@@ -423,7 +424,10 @@ class DupeDedupe:
         print(f"-------------------------------")
         print(f"Analysis")
         print(f"-------------------------------")
-        da = DupeAnalysis(debug=self.debug)
+        excludes = []
+        if self.synology:
+            excludes = ['*@eaDir*', '*/.*']
+        da = DupeAnalysis(debug=self.debug, excludes=excludes)
         da.load(self.dirs)
         rets = da.get_duplicates()
 
@@ -570,11 +574,15 @@ class DupeDedupe:
             # check whether we can find more in the area
             #  where kepts are already done to further concentrate
             #  the kepts
-            if self.depth_first:
-                # print('here')
-                d = DupeDir.calc_max(kept.parent, final_output.keys())
-            else:
-                d = DupeDir.calc_max(start_list, final_output.keys())
+            # if self.depth_first:
+            #     print('kept', kept)
+            #     if kept in dirs_w_dupes:
+            #         p = dirs_w_dupes[kept].parent
+            #         if p in dirs_w_dupes:
+            #             p = dirs_w_dupes[p]
+            #             d = DupeDir.calc_max(parent,
+            #                                  final_output.keys())
+            d = DupeDir.calc_max(start_list, final_output.keys())
             if not d:
                 new_dwd_depth = defaultdict(list)
                 # create new depth lookup
@@ -703,6 +711,7 @@ if __name__ == "__main__":
     parser.add_argument('dirs', type=str, nargs='+', help="Directories to act on.")
     parser.add_argument('--debug', action='store_true', help="Debug mode which deletes analyses and has extra printed detail.")
     parser.add_argument('--delete', action='store_true', help="Delete duplicates in a directory.")
+    parser.add_argument('--synology', action='store_true', help="Ignores dot and @eaDir files/dirs on synology NAS.")
     # parser.add_argument('--merge', metavar='DIR', help="Merge a specific directory and save the results -- no analysis provided.")
 
     args = parser.parse_args()
@@ -713,7 +722,7 @@ if __name__ == "__main__":
         #     da2 = DupeAnalysis([args.merge], args.debug)
         #     da1.merge(da2)
         # else:
-        da = DupeDedupe(args.dirs, args.debug)
+        da = DupeDedupe(args.dirs, args.debug, synology=args.synology)
         da.execute(args.delete)
     else:
         parser.print_help()
