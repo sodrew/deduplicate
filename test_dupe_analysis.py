@@ -10,6 +10,7 @@ class TestDupeAnalysis(unittest.TestCase):
     test_root = "test"  # Set a fixed directory for tests
     db_root = "test_dbs"
     had_exception = False
+    # debug = True
 
     def setUp(self):
         """Set up the test root directory."""
@@ -193,45 +194,52 @@ class TestDupeAnalysis(unittest.TestCase):
         # self.assertEqual(a-e, set(), f"\nextra: {pformat(a-e)}")
         # self.assertEqual(e-a, set(), f"\nmissing:{pformat(e-a)}")
 
-    def execute_default(self, dirs, complete_hash):
+    def execute_default(self, dirs, complete_hash, excludes):
         analysis = DupeAnalysis(debug=self.debug,
                                 complete_hash=complete_hash,
-                                db_root=self.db_root)
+                                db_root=self.db_root,
+                                excludes=excludes)
         analysis.load(dirs)
-        # pprint(analysis.dump_db())
         rets = analysis.get_duplicates()
-        # pprint(actual)
+        # pprint(analysis.dump_db())
+        # pprint(rets)
         analysis.close()
         return rets['dupes']
 
-    def execute_merge(self, dirs1, dirs2, complete_hash):
+    def execute_merge(self, dirs1, dirs2, complete_hash, excludes):
         analysis1 = DupeAnalysis(debug=self.debug,
                                  complete_hash=complete_hash,
-                                 db_root=self.db_root)
+                                 db_root=self.db_root,
+                                 excludes=excludes)
         analysis1.load(dirs1)
         # pprint(analysis1.dump_db())
         analysis1.close()
         analysis2 = DupeAnalysis(debug=self.debug,
                                  complete_hash=complete_hash,
-                                 db_root=self.db_root)
+                                 db_root=self.db_root,
+                                 excludes=excludes)
         dirs1.extend(dirs2)
         analysis2.load(dirs1)
         # pprint(analysis2.dump_db())
         rets = analysis2.get_duplicates()
-        # pprint(actual)
+        # pprint(rets)
         analysis2.close()
         return rets['dupes']
 
-    def execute(self, input, expected, dirs, input2=None, dirs2=None, complete_hash=False):
+    def execute(self, input, expected, dirs, input2=None, dirs2=None, complete_hash=False, excludes=[]):
         print(f"\n==={self.func()}===================================================================")
         self.generate_file_structure(input)
         dirs = [os.path.join(self.test_root, d) for d in dirs]
         if input2 and dirs2:
             self.generate_file_structure(input2)
             dirs2 = [os.path.join(self.test_root, d) for d in dirs2]
-            actual = self.execute_merge(dirs, dirs2, complete_hash=complete_hash)
+            actual = self.execute_merge(dirs, dirs2,
+                                        complete_hash=complete_hash,
+                                        excludes=excludes)
         else:
-            actual = self.execute_default(dirs, complete_hash=complete_hash)
+            actual = self.execute_default(dirs,
+                                          complete_hash=complete_hash,
+                                          excludes=excludes)
         print('\n======================================================================')
         self.validate_duplicates(actual, expected)
 
@@ -516,3 +524,27 @@ class TestDupeAnalysis(unittest.TestCase):
         ]
 
         self.execute(input, expected, dirs)
+
+    def test_exclude(self):
+        input = [
+            'folder1/file1a.txt',
+            'folder1/file1b.txt==folder1/file1a.txt',
+            'folder1/.Trash/file1c.txt',
+            'folder1/.bithub',
+            'folder1/@eaDir/file1d.txt',
+            'folder1/junk/@eaDir',
+        ]
+
+        expected = [
+            [
+                'folder1/file1a.txt',
+                'folder1/file1b.txt',
+                ],
+        ]
+
+        dirs = [
+            'folder1'
+        ]
+
+        self.execute(input, expected, dirs, excludes=['*@eaDir*', '*/.*'])
+

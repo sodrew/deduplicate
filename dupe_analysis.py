@@ -2,8 +2,10 @@ import hashlib
 import os
 import sqlite3
 import itertools
-from tqdm import tqdm
+import fnmatch
+import re
 import subprocess
+from tqdm import tqdm
 from pprint import pprint, pformat
 from dupe_utils import ProcessTimer
 
@@ -11,7 +13,8 @@ class DupeAnalysis:
     """Handles file hashing and analysis for directories, optimized with layered hashing."""
 
     def __init__(self, debug=False, complete_hash=False,
-                 db_root='dd_analysis', optimize=True):
+                 db_root='dd_analysis', optimize=True,
+                 batch_limit=2, excludes=[]):
 
         self.paths = None
         self.db_root = os.path.abspath(db_root)
@@ -21,9 +24,15 @@ class DupeAnalysis:
         self.debug = debug
         self.complete_hash = complete_hash
         self.optimize = optimize
+        self.excludes = excludes
+        self.excl_re = re.compile(r'|'.join([fnmatch.translate(x)
+                                  for x in excludes]) or r'$.')
         self.zero_hash = 'da39a3ee5e6b4b0d3255bfef95601890afd80709'
         if self.debug:
             self.optimize = False
+        self.batch_limit = batch_limit
+        if self.optimize:
+            self.batch_limit = 1000
 
         os.makedirs(self.db_root, exist_ok=True)
 
@@ -107,7 +116,8 @@ class DupeAnalysis:
                 self.db_path = db_path
                 print(f"\tCreating database {self.db_path} for {self.paths}")
                 self.conn, self.cursor = DupeAnalysis._init_db(db_path)
-                self.analyze(batch_db_calls=self.optimize)
+                self.analyze(batch_db_calls=self.optimize,
+                             batch_limit=self.batch_limit)
                 return
             else:
                 # attempt partial load; search for permutations of dirs
@@ -137,7 +147,7 @@ class DupeAnalysis:
                         # print('path', path)
                         sp = set()
                         sp.add(path)
-                        da = DupeAnalysis(self.debug, complete_hash=self.complete_hash, db_root=self.db_root, optimize=self.optimize)
+                        da = DupeAnalysis(self.debug, complete_hash=self.complete_hash, db_root=self.db_root, optimize=self.optimize, excludes=self.excludes)
                         da.load(sp)
                         da.close()
                         dbs_found[da.db_path] = sp
@@ -151,54 +161,83 @@ class DupeAnalysis:
         print(f"Analyzing: {self.paths}")
         timer = ProcessTimer(start=True)
 
-        batch = []
-        batch_zero = []
+        batch_fs = []
+        batch_fs_empty = []
+        batch_ds = []
+        batch_ds_empty = []
         total_size = self._get_total_size()
         with tqdm(total=total_size,
                   unit='B', unit_scale=True, unit_divisor=1024,
                   ncols=80, desc="\t[Pass 0] load filesizes") as pbar:
             for path in self.paths:
-                for dirpath, dirs, filenames in os.walk(path):
-                    for filename in filenames:
-                        full_path = os.path.join(dirpath, filename)
-                        depth = full_path.count(os.sep)
-                        try:
-                            file_size = os.path.getsize(full_path)
-                            if batch_db_calls:
-                                if file_size == 0:
-                                    batch_zero.append((full_path,
-                                                       depth,
-                                                       dirpath,
-                                                       filename))
-                                else:
-                                    batch.append((full_path, depth,
-                                                  dirpath,
-                                                  filename, file_size))
-                                if len(batch) >= batch_limit:
-                                    self._insert_files_batch(batch)
-                                    batch = []
-
-                                if len(batch_zero) >= batch_limit:
-                                    self._insert_files_batch_zero(batch_zero)
-                                    batch_zero = []
-                            else:
-                                self._insert_file(full_path, depth, dirpath, filename, file_size)
-                            pbar.update(file_size)
-                        except OSError:
+                for root, dirs, files in os.walk(path):
+                    filtered_files = []
+                    for fname in files:
+                        depth = fname.count(os.sep)
+                        path = os.path.join(root, fname)
+                        # exclude files
+                        if self.excl_re.match(path):
                             continue
+                        filtered_files.append(path)
+                        try:
+                            file_size = os.path.getsize(path)
+                        except OSError:
+                            file_size = -1
 
+                        if batch_db_calls:
+                            if file_size == 0:
+                                batch_fs_empty.append((path,
+                                                   depth,
+                                                   root,
+                                                   fname))
+                            else:
+                                batch_fs.append((path, depth,
+                                              root,
+                                              fname, file_size))
+                            if len(batch_fs) >= batch_limit:
+                                self._insert_files_batch(batch_fs)
+                                batch_fs = []
+
+                            if len(batch_fs_empty) >= batch_limit:
+                                self._insert_files_batch_empty(batch_fs_empty)
+                                batch_fs_empty = []
+                        else:
+                            self._insert_file(path, depth, root, fname, file_size)
+                        pbar.update(file_size)
+
+                    # exclude dirs
+                    dirs[:] = [os.path.join(root, d) for d in dirs]
+                    dirs[:] = [d for d in dirs
+                               if not self.excl_re.match(d)]
                     if dirs:
-                        self._insert_dirs(dirpath, dirs)
+                        if batch_db_calls:
+                            batch_ds.append((root, dirs))
 
-                    if not dirs and not filenames:
-                        self._insert_empty_dir(dirpath)
+                            if len(batch_ds) >= batch_limit:
+                                self._insert_dirs_batch(batch_ds)
+                                batch_ds = []
+                        else:
+                            self._insert_dirs(root, dirs)
+                    else:
+                        if not filtered_files:
+                            if batch_db_calls:
+                                batch_ds_empty.append((root,))
 
+                                if len(batch_ds_empty) >= batch_limit:
+                                    self._insert_dirs_empty(batch_ds_empty)
+                                    batch_ds_empty = []
+                            else:
+                                self._insert_dirs_empty([(root,)])
 
         if batch_db_calls:
-            if batch:
-                self._insert_files_batch(batch)
-            if batch_zero:
-                self._insert_files_batch_zero(batch_zero)
+            if batch_fs:
+                self._insert_files_batch(batch_fs)
+            if batch_fs_empty:
+                self._insert_files_empty_batch(batch_fs_empty)
+            if batch_ds:
+                self._insert_dirs_batch(batch_ds)
+            if batch_ds_empty:
+                self._insert_dirs_empty(batch_ds_empty)
 
         self._compute_hashes()
         print(f"\tTotal Analysis Time: {timer.elapsed_readable()}")
@@ -219,16 +258,6 @@ class DupeAnalysis:
                     total_size += int(output)
         return total_size
 
-    def _insert_dirs(self, path, dirs):
-        # print('**********', path, dirs)
-        newdirs = [(path, os.path.join(path, d)) for d in dirs]
-        # print(newdirs)
-        self.cursor.executemany(f"""
-            INSERT INTO dirs (dirpath, subdir)
-            VALUES (?, ?)
-        """, newdirs)
-        self.conn.commit()
-
     def _insert_file(self, path, depth, dirpath, name, size):
         self.cursor.execute("""
             INSERT INTO files (path, depth, dirpath, name, size)
@@ -243,18 +272,36 @@ class DupeAnalysis:
         """, batch)
         self.conn.commit()
 
-    def _insert_files_batch_zero(self, batch_zero):
+    def _insert_files_empty_batch(self, batch_zero):
         self.cursor.executemany(f"""
             INSERT INTO files (path, depth, dirpath, name, size, beg_hash, rev_hash, full_hash)
             VALUES (?, ?, ?, ?, 0, '{self.zero_hash}', '{self.zero_hash}', '{self.zero_hash}')
         """, batch_zero)
         self.conn.commit()
 
-    def _insert_empty_dir(self, path):
-        self.cursor.execute("""
+    def _insert_dirs(self, path, dirs):
+        new_dirs = [(d,) for d in dirs]
+        self.cursor.executemany(f"""
+            INSERT INTO dirs (dirpath, subdir)
+            VALUES ('{path}', ?)
+        """, new_dirs)
+        self.conn.commit()
+
+    def _insert_dirs_batch(self, batch_ds):
+        all_inserts = []
+        for p, ds in batch_ds:
+            all_inserts.extend([(p, d) for d in ds])
+        self.cursor.executemany(f"""
+            INSERT INTO dirs (dirpath, subdir)
+            VALUES (?, ?)
+        """, all_inserts)
+        self.conn.commit()
+
+    def _insert_dirs_empty(self, paths):
+        self.cursor.executemany("""
             INSERT INTO empty_dirs (path)
             VALUES (?)
-        """, (path,))
+        """, paths)
         self.conn.commit()
 
     def _compute_hashes(self):

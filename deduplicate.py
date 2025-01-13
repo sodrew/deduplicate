@@ -541,7 +541,7 @@ class DupeDedupe:
         # get the highest directory level of each dir family of dupes
         key = next(iter(ordered_keys))
         start_list = dirs_w_dupes_by_depth[key]
-        pprint(start_list)
+        # pprint(start_list)
         # determine which dir to start with
         d = DupeDir.calc_max(start_list)
         print(f'\tFound first keep dir: {d.path}')
@@ -599,7 +599,8 @@ class DupeDedupe:
             # print('pass ', debug_count)
             remaining_dupes = all_dupes - reviewed
 
-        pprint(f'remaining_dupes\n{pformat(remaining_dupes)}')
+        if remaining_dupes:
+            print(f'Remaining dupes:\n{pformat(remaining_dupes)}')
 
         # pprint(final_output)
         # pprint(delete_lookup)
