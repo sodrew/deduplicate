@@ -21,11 +21,11 @@ class TestDupeAnalysis(unittest.TestCase):
             shutil.rmtree(self.test_root)
         os.makedirs(self.test_root)
 
-        print('here', self.db_root)
+        # print('here', self.db_root)
         self.db_root = os.path.abspath(self.db_root)
         if os.path.exists(self.db_root):
             shutil.rmtree(self.db_root)
-        print('here', self.db_root)
+        # print('here', self.db_root)
         os.makedirs(self.db_root)
 
     def func(self):

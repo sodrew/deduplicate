@@ -2,6 +2,7 @@
 import argparse
 import sys
 import csv
+from tqdm import tqdm
 from collections import defaultdict
 from pprint import pprint, pformat
 from dupe_utils import FileUtil, ProcessTimer
@@ -76,7 +77,7 @@ class DupeDir(DupeFile):
         x = {'kept': self.kept_total,
              'extra': self.extra_total,
              'count': self.count_total,
-             'keepable': len(self.get_first_keepable().path),
+             'keepable': self.get_first_keepable(),
              'size': self.size,
              'is_deleted': self.is_deleted,
              }
@@ -187,20 +188,22 @@ class DupeDir(DupeFile):
             prev_dd = dd
 
     def get_first_keepable(self):
-        if self.count_total < 1:
-            return None
+        # print(self.path, self.is_deleted, self.count_total)
+        if self.count_total < 1 or self.is_deleted:
+            return 0
 
         if not self.is_deleted:
             # print('get_first_keepable', self.path)
             if (self.has_no_unkept_dupefiles() or
                 not self.has_no_dupedirs() and self.has_no_dupefiles()):
-                keepable_dupes = set()
                 for sd in self.subdir_dupes:
                     found = sd.get_first_keepable()
-                    if found:
+                    if found > 0:
                         return found
             else:
-                return self
+                return len(self.path)
+
+        return 0
 
 
     def get_keepable_dirs(self):
@@ -255,7 +258,7 @@ class DupeDir(DupeFile):
         # print('calc_max(): dupedir_list\n', pformat(dupedir_list))
         filtered_list = set()
         for d in dupedir_list:
-            if not d.is_deleted:
+            if not d.is_deleted and d.get_first_keepable() > 0:
                 filtered_list.add(d)
 
         if len(filtered_list) == 0:
@@ -278,7 +281,7 @@ class DupeDir(DupeFile):
                                 reversor(d.kept_total),
                                 reversor(d.count_total),
                                 reversor(d.extra_total),
-                                len(d.get_first_keepable().path),
+                                d.get_first_keepable(),
                                 d.path,
                                 # d.size,
                                 # # prefer shallower directory
@@ -294,6 +297,7 @@ class DupeDir(DupeFile):
             if dirs:
                 keepable = next(iter(dirs))
                 break
+
         # also seek out children that would have actual files to keep
         # for d in dupedir_list:
         #     filtered_list.update(d.get_keepable_dirs())
@@ -452,33 +456,42 @@ class DupeDedupe:
             dirs_w_dupes[dd.path] = dd
             dirs_w_dupes_by_depth[dd.depth].append(dd)
 
+        print('\tCreating objects')
         # create the dupe file objects
-        for hash, files in hashes_full.items():
-            # if len(files) < 2:
-            #     continue
-            obj_list = set()
-            for path in files:
-                if path not in dupefiles:
-                    df = DupeFile(path, hash,
-                                  rev_hashes_by_size[path])
-                    dupefiles[path] = df
-                    obj_list.add(df)
 
-                parent = dupefiles[path].parent
-                # print('p', parent)
-                if parent not in dirs_w_dupes:
-                    dd = DupeDir(parent, None)
-                    dirs_w_dupes[parent] = dd
-                    dirs_w_dupes_by_depth[dd.depth].append(dd)
-                    sp = dd.check_single_parent(da)
-                    # print('sp', sp)
-                    if sp:
-                        dirs_w_dupes[sp.path] = sp
-                        dirs_w_dupes_by_depth[sp.depth].append(sp)
+        with tqdm(total=len(hashes_full), unit='file', unit_scale=True,
+                  ncols=80, desc=f"\tProcessing") as pbar:
+            for hash, files in hashes_full.items():
+                # if len(files) < 2:
+                #     continue
+                obj_list = set()
+                for path in files:
+                    if path not in dupefiles:
+                        # print(f'\r\t  Processing: {parent}', end='')
+                        df = DupeFile(path, hash,
+                                      rev_hashes_by_size[path])
+                        dupefiles[path] = df
+                        obj_list.add(df)
 
-            # set the duplicates
-            for df in obj_list:
-                df.set_dupes(obj_list)
+                    parent = dupefiles[path].parent
+                    # print('p', parent)
+                    if parent not in dirs_w_dupes:
+                        # print(f'\r\t  Processing: {parent}', end='')
+                        dd = DupeDir(parent, None)
+                        dirs_w_dupes[parent] = dd
+                        dirs_w_dupes_by_depth[dd.depth].append(dd)
+                        sp = dd.check_single_parent(da)
+                        # print('sp', sp)
+                        if sp:
+                            dirs_w_dupes[sp.path] = sp
+                            dirs_w_dupes_by_depth[sp.depth].append(sp)
+
+                # set the duplicates
+                for df in obj_list:
+                    df.set_dupes(obj_list)
+
+                pbar.update(1)
+
 
         # pprint(dupefiles)
 
@@ -496,6 +509,7 @@ class DupeDedupe:
         rev_ordered_keys = ordered_keys.copy()
         rev_ordered_keys.reverse()
 
+        print('\tFilling in parents')
         # fill in empty parent dirs to aggregate
         #  sizes and counts.
         for key in rev_ordered_keys:
@@ -510,16 +524,27 @@ class DupeDedupe:
         rev_ordered_keys = ordered_keys.copy()
         rev_ordered_keys.reverse()
 
-        for key in rev_ordered_keys:
-            for dd in dirs_w_dupes_by_depth[key]:
-                dd.load_fs(da, dupefiles, dirs_w_dupes)
-                # print(dd.size, dd.path)
+        with tqdm(total=len(rev_ordered_keys), unit='file',
+                  unit_scale=True,
+                  ncols=80, desc=f"\tLoading file system") as pbar1:
+            for key in rev_ordered_keys:
+                with tqdm(total=len(dirs_w_dupes_by_depth[key]),
+                          unit='file', unit_scale=True,
+                          leave=False,
+                          ncols=80, desc=f"\t  Processing") as pbar2:
+                    for dd in dirs_w_dupes_by_depth[key]:
+                        dd.load_fs(da, dupefiles, dirs_w_dupes)
+                        pbar2.update(1)
+                pbar1.update(1)
+
 
         # get the highest directory level of each dir family of dupes
         key = next(iter(ordered_keys))
         start_list = dirs_w_dupes_by_depth[key]
+        pprint(start_list)
         # determine which dir to start with
         d = DupeDir.calc_max(start_list)
+        print(f'\tFound first keep dir: {d.path}')
         # print('d', d)
         final_output = {}
         # delete_lookup used by DupeDir.keep()
@@ -539,7 +564,7 @@ class DupeDedupe:
 
         # do more passes until dupes are all found
         while len(remaining_dupes) > 0:
-            # print('looping')
+            print(f'\tRemaining dupes to process: {len(remaining_dupes)}')
             # check whether we can find more in the area
             #  where kepts are already done to further concentrate
             #  the kepts
@@ -557,17 +582,24 @@ class DupeDedupe:
                 # print('new_dwd_depth', pformat(new_dwd_depth))
                 ordered_keys = sorted(new_dwd_depth.keys())
                 if ordered_keys:
-                    key = next(iter(ordered_keys))
-                    start_list = new_dwd_depth[key]
-                    # print('start_list', pformat(start_list))
-                    d = DupeDir.calc_max(start_list, final_output.keys())
+                    for key in ordered_keys:
+                        start_list = new_dwd_depth[key]
+                        # print('start_list', pformat(start_list))
+                        d = DupeDir.calc_max(start_list, final_output.keys())
+                        if d:
+                            break
                 # print('calc', d)
+            if not d:
+                break
+
+
             kept, kepts, dels = d.keep(final_output, delete_lookup, dirs_w_dupes)
             reviewed.update(kepts)
             reviewed.update(dels)
             # print('pass ', debug_count)
             remaining_dupes = all_dupes - reviewed
 
+        pprint(f'remaining_dupes\n{pformat(remaining_dupes)}')
 
         # pprint(final_output)
         # pprint(delete_lookup)

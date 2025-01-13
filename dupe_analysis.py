@@ -50,6 +50,7 @@ class DupeAnalysis:
         CREATE TABLE IF NOT EXISTS files (
             id INTEGER PRIMARY KEY,
             path TEXT UNIQUE,
+            depth INTEGER,
             dirpath TEXT,
             name TEXT,
             size INTEGER,
@@ -58,16 +59,25 @@ class DupeAnalysis:
             full_hash TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS dirs (
+            id INTEGER PRIMARY KEY,
+            dirpath TEXT,
+            subdir TEXT
+        );
+
         CREATE TABLE IF NOT EXISTS empty_dirs (
             id INTEGER PRIMARY KEY,
             path TEXT UNIQUE
         );
 
         CREATE INDEX IF NOT EXISTS idx_files_dirpath ON files(dirpath);
+        CREATE INDEX IF NOT EXISTS idx_files_depth ON files(depth);
         CREATE INDEX IF NOT EXISTS idx_files_size ON files(size);
         CREATE INDEX IF NOT EXISTS idx_files_beg_hash ON files(beg_hash);
         CREATE INDEX IF NOT EXISTS idx_files_rev_hash ON files(rev_hash);
         CREATE INDEX IF NOT EXISTS idx_files_full_hash ON files(full_hash);
+
+        CREATE INDEX IF NOT EXISTS idx_dirs_dirpath ON dirs(dirpath);
         """)
         conn.commit()
         return conn, cursor
@@ -81,7 +91,7 @@ class DupeAnalysis:
     def load(self, dirs):
         self.paths = {os.path.abspath(dir) for dir in dirs}
         exists, db_path = DupeAnalysis._exists(self.paths, self.db_root)
-        # self.paths = '/volume1/Photos'
+        # self.paths = ['/volume1/Photos']
         # exists = True
         # db_path = '6f598c9f70b4ec41973449688788aabdb0bad847.db'
 
@@ -137,7 +147,7 @@ class DupeAnalysis:
                 self._merge(dbs_found)
 
 
-    def analyze(self, batch_db_calls=True):
+    def analyze(self, batch_db_calls=True, batch_limit=1000):
         print(f"Analyzing: {self.paths}")
         timer = ProcessTimer(start=True)
 
@@ -151,28 +161,38 @@ class DupeAnalysis:
                 for dirpath, dirs, filenames in os.walk(path):
                     for filename in filenames:
                         full_path = os.path.join(dirpath, filename)
+                        depth = full_path.count(os.sep)
                         try:
                             file_size = os.path.getsize(full_path)
                             if batch_db_calls:
                                 if file_size == 0:
-                                    batch_zero.append((full_path, dirpath, filename))
+                                    batch_zero.append((full_path,
+                                                       depth,
+                                                       dirpath,
+                                                       filename))
                                 else:
-                                    batch.append((full_path, dirpath, filename, file_size))
-                                if len(batch) >= 100:
+                                    batch.append((full_path, depth,
+                                                  dirpath,
+                                                  filename, file_size))
+                                if len(batch) >= batch_limit:
                                     self._insert_files_batch(batch)
                                     batch = []
 
-                                if len(batch_zero) >= 100:
+                                if len(batch_zero) >= batch_limit:
                                     self._insert_files_batch_zero(batch_zero)
                                     batch_zero = []
                             else:
-                                self._insert_file(full_path, dirpath, filename, file_size)
+                                self._insert_file(full_path, depth, dirpath, filename, file_size)
                             pbar.update(file_size)
                         except OSError:
                             continue
 
+                    if dirs:
+                        self._insert_dirs(dirpath, dirs)
+
                     if not dirs and not filenames:
                         self._insert_empty_dir(dirpath)
+
 
         if batch_db_calls:
             if batch:
@@ -199,30 +219,40 @@ class DupeAnalysis:
                     total_size += int(output)
         return total_size
 
-    def _insert_file(self, path, dirpath, name, size):
+    def _insert_dirs(self, path, dirs):
+        # print('**********', path, dirs)
+        newdirs = [(path, os.path.join(path, d)) for d in dirs]
+        # print(newdirs)
+        self.cursor.executemany(f"""
+            INSERT INTO dirs (dirpath, subdir)
+            VALUES (?, ?)
+        """, newdirs)
+        self.conn.commit()
+
+    def _insert_file(self, path, depth, dirpath, name, size):
         self.cursor.execute("""
-            INSERT OR IGNORE INTO files (path, dirpath, name, size)
-            VALUES (?, ?, ?, ?)
-        """, (path, dirpath, name, size))
+            INSERT INTO files (path, depth, dirpath, name, size)
+            VALUES (?, ?, ?, ?, ?)
+        """, (path, depth, dirpath, name, size))
         self.conn.commit()
 
     def _insert_files_batch(self, batch):
         self.cursor.executemany("""
-            INSERT OR IGNORE INTO files (path, dirpath, name, size)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO files (path, depth, dirpath, name, size)
+            VALUES (?, ?, ?, ?, ?)
         """, batch)
         self.conn.commit()
 
     def _insert_files_batch_zero(self, batch_zero):
         self.cursor.executemany(f"""
-            INSERT OR IGNORE INTO files (path, dirpath, name, size, beg_hash, rev_hash, full_hash)
-            VALUES (?, ?, ?, 0, '{self.zero_hash}', '{self.zero_hash}', '{self.zero_hash}')
+            INSERT INTO files (path, depth, dirpath, name, size, beg_hash, rev_hash, full_hash)
+            VALUES (?, ?, ?, ?, 0, '{self.zero_hash}', '{self.zero_hash}', '{self.zero_hash}')
         """, batch_zero)
         self.conn.commit()
 
     def _insert_empty_dir(self, path):
         self.cursor.execute("""
-            INSERT OR IGNORE INTO empty_dirs (path)
+            INSERT INTO empty_dirs (path)
             VALUES (?)
         """, (path,))
         self.conn.commit()
@@ -316,15 +346,19 @@ class DupeAnalysis:
 
     def _copy_data(self, source_db_path):
         conn, cursor = DupeAnalysis._connect_db(source_db_path)
-        cursor.execute("SELECT path, dirpath, name, size, beg_hash, rev_hash, full_hash FROM files")
+        cursor.execute("SELECT path, depth, dirpath, name, size, beg_hash, rev_hash, full_hash FROM files")
         for row in cursor.fetchall():
             self.cursor.execute("""
-                INSERT OR IGNORE INTO files (path, dirpath, name, size, beg_hash, rev_hash, full_hash)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT OR IGNORE INTO files (path, depth, dirpath, name, size, beg_hash, rev_hash, full_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, row)
         cursor.execute("SELECT path FROM empty_dirs")
         for row in cursor.fetchall():
             self.cursor.execute("INSERT OR IGNORE INTO empty_dirs (path) VALUES (?)", row)
+
+        cursor.execute("SELECT dirpath, subdir FROM dirs")
+        for row in cursor.fetchall():
+            self.cursor.execute("INSERT OR IGNORE INTO dirs (dirpath, subdir) VALUES (?, ?)", row)
         conn.close()
 
     def _merge(self, dbs_found):
@@ -367,18 +401,19 @@ class DupeAnalysis:
 
         # Fetch files
         for row in self.cursor.execute("""
-        SELECT path, dirpath, name, size, beg_hash, rev_hash, full_hash
+        SELECT path, depth, dirpath, name, size, beg_hash, rev_hash, full_hash
         FROM files
         ORDER BY path ASC
             """):
             files.append({
                 "path": row[0],
-                "dirpath": row[1],
-                "name": row[2],
-                "size": row[3],
-                "beg_hash": row[4],
-                "rev_hash": row[5],
-                "full_hash": row[6],
+                "depth": row[1],
+                "dirpath": row[2],
+                "name": row[3],
+                "size": row[4],
+                "beg_hash": row[5],
+                "rev_hash": row[6],
+                "full_hash": row[7],
             })
 
         # Fetch empty directories
@@ -420,40 +455,62 @@ class DupeAnalysis:
         return duplicates, sizes
 
     def get_dir_info(self, directory):
-        dir_len = len(directory)
+        depth = directory.count(os.sep)
+
         self.cursor.execute(f"""
-        SELECT
-            CASE
-                WHEN dirpath = ? THEN 'file'
-                WHEN dirpath LIKE ? THEN 'subdir'
-            END AS type,
-            CASE
-                WHEN dirpath = ? THEN path
-                WHEN dirpath LIKE ? THEN
-                substr(path, 1, ? +
-                    instr(substr(path, ? + 2, length(path)-?), '/'))
-            END AS item
+        SELECT path
         FROM files
-        WHERE dirpath = ? OR dirpath LIKE ?
-        """, (directory,
-              f"{directory}/%",
-              directory,
-              f"{directory}/%",
-              dir_len, dir_len, dir_len,
-              directory, f"{directory}/%"))
+        WHERE dirpath = ?
+        """, (directory,))
 
-        files = []
-        subdirs = set()
+        files = [f[0] for f in self.cursor.fetchall()]
 
-        for row in self.cursor.fetchall():
-            type_, item = row
-            if type_ == 'file':
-                files.append(item)
-            elif type_ == 'subdir':
-                subdirs.add(item)
+        self.cursor.execute(f"""
+        SELECT subdir
+        FROM dirs
+        WHERE dirpath = ?
+        """, (directory,))
 
-        # print('get_dir_info()', directory, pformat(files), pformat(subdirs))
-        return {'files': files, 'subdirs': list(subdirs)}
+        subdirs = [s[0] for s in self.cursor.fetchall()]
+
+        # print(f"get_dir_info(): {depth}, {directory}\n{pformat({'files': files, 'subdirs': subdirs})}")
+        return {'files': files, 'subdirs': subdirs}
+
+    # def get_dir_info(self, directory):
+    #     dir_len = len(directory)
+    #     self.cursor.execute(f"""
+    #     SELECT
+    #         CASE
+    #             WHEN dirpath = ? THEN 'file'
+    #             WHEN dirpath LIKE ? THEN 'subdir'
+    #         END AS type,
+    #         CASE
+    #             WHEN dirpath = ? THEN path
+    #             WHEN dirpath LIKE ? THEN
+    #             substr(path, 1, ? +
+    #                 instr(substr(path, ? + 2, length(path)-?), '/'))
+    #         END AS item
+    #     FROM files
+    #     WHERE dirpath = ? OR dirpath LIKE ?
+    #     """, (directory,
+    #           f"{directory}/%",
+    #           directory,
+    #           f"{directory}/%",
+    #           dir_len, dir_len, dir_len,
+    #           directory, f"{directory}/%"))
+
+    #     files = []
+    #     subdirs = set()
+
+    #     for row in self.cursor.fetchall():
+    #         type_, item = row
+    #         if type_ == 'file':
+    #             files.append(item)
+    #         elif type_ == 'subdir':
+    #             subdirs.add(item)
+
+    #     # print('get_dir_info()', directory, pformat(files), pformat(subdirs))
+    #     return {'files': files, 'subdirs': list(subdirs)}
 
     def get_duplicates(self):
         """
