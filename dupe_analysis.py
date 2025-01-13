@@ -13,8 +13,8 @@ class DupeAnalysis:
     """Handles file hashing and analysis for directories, optimized with layered hashing."""
 
     def __init__(self, debug=False, complete_hash=False,
-                 db_root='dd_analysis', optimize=True,
-                 batch_limit=2, excludes=[]):
+                 db_root='dd_analysis',
+                 batch_limit=1000, excludes=[]):
 
         self.paths = None
         self.db_root = os.path.abspath(db_root)
@@ -23,16 +23,13 @@ class DupeAnalysis:
         self.cursor = None
         self.debug = debug
         self.complete_hash = complete_hash
-        self.optimize = optimize
         self.excludes = excludes
         self.excl_re = re.compile(r'|'.join([fnmatch.translate(x)
                                   for x in excludes]) or r'$.')
         self.zero_hash = 'da39a3ee5e6b4b0d3255bfef95601890afd80709'
-        if self.debug:
-            self.optimize = False
         self.batch_limit = batch_limit
-        if self.optimize:
-            self.batch_limit = 1000
+        if self.debug:
+            self.batch_limit = 2
 
         os.makedirs(self.db_root, exist_ok=True)
 
@@ -116,8 +113,7 @@ class DupeAnalysis:
                 self.db_path = db_path
                 print(f"\tCreating database {self.db_path} for {self.paths}")
                 self.conn, self.cursor = DupeAnalysis._init_db(db_path)
-                self.analyze(batch_db_calls=self.optimize,
-                             batch_limit=self.batch_limit)
+                self.analyze(batch_limit=self.batch_limit)
                 return
             else:
                 # attempt partial load; search for permutations of dirs
@@ -147,7 +143,7 @@ class DupeAnalysis:
                         # print('path', path)
                         sp = set()
                         sp.add(path)
-                        da = DupeAnalysis(self.debug, complete_hash=self.complete_hash, db_root=self.db_root, optimize=self.optimize, excludes=self.excludes)
+                        da = DupeAnalysis(self.debug, complete_hash=self.complete_hash, db_root=self.db_root, excludes=self.excludes)
                         da.load(sp)
                         da.close()
                         dbs_found[da.db_path] = sp
@@ -157,7 +153,7 @@ class DupeAnalysis:
                 self._merge(dbs_found)
 
 
-    def analyze(self, batch_db_calls=True, batch_limit=1000):
+    def analyze(self, batch_limit=1000):
         print(f"Analyzing: {self.paths}")
         timer = ProcessTimer(start=True)
 
@@ -166,6 +162,7 @@ class DupeAnalysis:
         batch_ds = []
         batch_ds_empty = []
         total_size = self._get_total_size()
+        batch_db_calls = batch_limit > 1
         with tqdm(total=total_size,
                   unit='B', unit_scale=True, unit_divisor=1024,
                   ncols=80, desc="\t[Pass 0] load filesizes") as pbar:
@@ -198,8 +195,9 @@ class DupeAnalysis:
                                 self._insert_files_batch(batch_fs)
                                 batch_fs = []
 
+                            # print(batch_limit, len(batch_fs_empty))
                             if len(batch_fs_empty) >= batch_limit:
-                                self._insert_files_batch_empty(batch_fs_empty)
+                                self._insert_files_empty_batch(batch_fs_empty)
                                 batch_fs_empty = []
                         else:
                             self._insert_file(path, depth, root, fname, file_size)

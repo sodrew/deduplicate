@@ -548,3 +548,33 @@ class TestDupeAnalysis(unittest.TestCase):
 
         self.execute(input, expected, dirs, excludes=['*/@*', '*/.*'])
 
+    def test_empty_dirs_files(self):
+        input = [
+            'folder1/file1a.txt',
+            'folder1/file1b.txt==folder1/file1a.txt',
+            'folder1/dir1/',
+            'folder1/dir2/',
+            'folder1/dir3/',
+            'folder1/dir4/file2.txt:0KB',
+            'folder1/dir4/file3.txt:0KB',
+            'folder1/dir4/file4.txt:0KB',
+        ]
+
+        expected = [
+            [
+                'folder1/file1a.txt',
+                'folder1/file1b.txt',
+                ],
+            [
+                'folder1/dir4/file2.txt',
+                'folder1/dir4/file3.txt',
+                'folder1/dir4/file4.txt',
+                ],
+        ]
+
+        dirs = [
+            'folder1'
+        ]
+
+        self.execute(input, expected, dirs)
+
