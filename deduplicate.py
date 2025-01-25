@@ -314,12 +314,15 @@ class DupeDir(DupeFile):
         checked = set()
         # print(f'check_largest(): self={self.path}')
         for ddp in self.dd_dupes:
-            # print(f'check_largest(): dd={ddp}')
+            # print(f'check_largest(): dd1={ddp}')
             if ddp not in checked and ddp in dwd:
                 checked.add(ddp)
                 dd = dwd[ddp]
+                # print(f'check_largest(): dd2={dd.path}')
                 if not dd.is_empty():
-                    if len(dd.file_dupes) > len(largest.file_dupes):
+                    # print(f'check_largest(): dd3={dd.count} > {largest.count}')
+                    if dd.count + dd.extra > largest.count + largest.extra:
+                        # print(f'check_largest(): dd4={ddp}')
                         largest = dd
         # if largest != self:
         #     print(f'\tcheck_largest(): switch to {largest} from {self}')
@@ -413,14 +416,16 @@ class DupeDir(DupeFile):
 class DupeDedupe:
     """Determines optimal delete for DupeAnalysis instances."""
 
-    def __init__(self, dirs, debug=False, depth_first=True, synology=False):
-        self.dirs = dirs
-        self.debug = debug
-        self.depth_first = depth_first
+    def __init__(self, cmd_args):
+        self.dirs = args.dirs
+        self.debug = args.debug
         self.timer = ProcessTimer(start=True)
-        self.synology = synology
+        self.synology = args.synology
+        self.exec_delete = args.delete
+        self.analyze_only = args.analyze
+        self.manual_db = args.manual
 
-    def analyze(self, analyze_only=False):
+    def analyze(self):
         """Compare the two directories for duplicate files."""
 
         print(f"-------------------------------")
@@ -430,11 +435,11 @@ class DupeDedupe:
         if self.synology:
             excludes = ['*/@*', '*/.*']
         da = DupeAnalysis(debug=self.debug, excludes=excludes)
-        da.load(self.dirs)
+        da.load(self.dirs, manual_db=self.manual_db)
 
         print(f"-------------------------------")
 
-        if analyze_only:
+        if self.analyze_only:
             print('Analysis complete, not performing recommendation')
             return {'junk': 1}
 
@@ -577,17 +582,6 @@ class DupeDedupe:
         # do more passes until dupes are all found
         while len(remaining_dupes) > 0:
             print(f'\tRemaining dupes to process: {len(remaining_dupes)}')
-            # check whether we can find more in the area
-            #  where kepts are already done to further concentrate
-            #  the kepts
-            # if self.depth_first:
-            #     print('kept', kept)
-            #     if kept in dirs_w_dupes:
-            #         p = dirs_w_dupes[kept].parent
-            #         if p in dirs_w_dupes:
-            #             p = dirs_w_dupes[p]
-            #             d = DupeDir.calc_max(parent,
-            #                                  final_output.keys())
             d = DupeDir.calc_max(start_list, dirs_w_dupes, final_output.keys())
             if not d:
                 new_dwd_depth = defaultdict(list)
@@ -661,12 +655,12 @@ class DupeDedupe:
 
         return final_output
 
-    def execute(self, exec_delete=False, analyze_only=False):
+    def execute(self):
         try:
-            final_dirs = self.analyze(analyze_only)
+            final_dirs = self.analyze()
             if not final_dirs:
                 print("\nNo duplicates found")
-            elif analyze_only:
+            elif self.analyze_only:
                 return
             else:
                 print(f"-------------------------------")
@@ -692,7 +686,7 @@ class DupeDedupe:
                            # print(f"            {d.path}")
                            size += d.size
                            # print(d.path, size)
-                           if exec_delete:
+                           if self.exec_delete:
                                FileUtil.delete(d.path)
 
                            keeper = d.deleted_by
@@ -720,20 +714,13 @@ if __name__ == "__main__":
     parser.add_argument('--delete', action='store_true', help="Delete duplicates in a directory.")
     parser.add_argument('--synology', action='store_true', help="Ignores certain files/dirs on synology NAS (@dirs, .files).")
     parser.add_argument('--analyze', action='store_true', help="Only performs dupe analysis, not any recommendation.")
-    parser.add_argument('--manual', metavar='DIR', help="Analyze a specific directory.")
-
-    # parser.add_argument('--merge', metavar='DIR', help="Merge a specific directory and save the results -- no analysis provided.")
+    parser.add_argument('--manual', metavar='DB', help="Analyze a specific directory.")
 
     args = parser.parse_args()
 
     if args.dirs:
-        # if args.merge:
-        #     da1 = DupeAnalysis([args.directory], args.debug)
-        #     da2 = DupeAnalysis([args.merge], args.debug)
-        #     da1.merge(da2)
-        # else:
-        da = DupeDedupe(args.dirs, args.debug, synology=args.synology)
-        da.execute(exec_delete=args.delete, analyze_only=args.analyze)
+        da = DupeDedupe(args)
+        da.execute()
     else:
         parser.print_help()
 

@@ -94,16 +94,14 @@ class DupeAnalysis:
         exists = os.path.exists(db_path)
         return (exists, db_path)
 
-    def load(self, dirs):
-        self.paths = {os.path.abspath(dir) for dir in dirs}
-        exists, db_path = DupeAnalysis._exists(self.paths, self.db_root)
-
-        # self.paths = ['/volume1/Photos']
-        # exists = True
-        # db_path = '6f598c9f70b4ec41973449688788aabdb0bad847.db'
-        # self.paths = ['/volume1/NetBackup']
-        # exists = True
-        # db_path = '03915609392d48546581ed2c04d879ef02283ca8.db'
+    def load(self, dirs, manual_db=None):
+        if manual_db:
+            self.paths = dirs
+            db_path = manual_db
+            exists = True
+        else:
+            self.paths = {os.path.abspath(dir) for dir in dirs}
+            exists, db_path = DupeAnalysis._exists(self.paths, self.db_root)
 
         print(f"Attempting load of {self.paths}")
         if exists:

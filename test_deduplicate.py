@@ -326,8 +326,8 @@ class DuplicateDeletionTest(unittest.TestCase):
             ]
 
         output = [
-            'folder1/file1',
-            'folder1/file2',
+            'folder1/child2/file1',
+            'folder1/child2/file2',
             'folder1/child2/file3',
             ]
 
