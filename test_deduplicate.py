@@ -475,12 +475,12 @@ class DuplicateDeletionTest(unittest.TestCase):
             ]
 
         output = [
-            'folder2/child2/grand1/file1',
-            'folder2/child2/grand2/file2',
-            'folder2/child2/grand3/file3',
-            'folder2/child2/grand4/file4',
-            'folder2/child2/grand5/file5',
-            'folder2/file6',
+            'folder1/child1/file1',
+            'folder1/child1/file2',
+            'folder1/child1/file3',
+            'folder1/child2/file4',
+            'folder1/child2/file5',
+            'folder1/child2/file6',
             ]
 
         self.execute(input, output)
@@ -503,17 +503,34 @@ class DuplicateDeletionTest(unittest.TestCase):
             ]
 
         output = [
-            'folder2/child1/grand1/file1',
-            'folder2/child1/grand2/file2',
-            'folder2/child1/grand3/file3',
-            'folder2/child1/grand4/file4',
-            'folder2/child2/grand5/file5',
-            'folder2/file6',
+            'folder1/child1/file1',
+            'folder1/child1/file2',
+            'folder1/child1/file3',
+            'folder1/child2/file4',
+            'folder1/child2/file5',
+            'folder1/child2/file6',
             'folder2/file7',
             ]
 
         self.execute(input, output, output_detail=True)
 
+    def test_incomplete_dir(self):
+        input = [
+            'folder1/child1/file1',
+            'folder1/child1/file2',
+            'folder2/child1/grand1/file1',
+            'folder2/child1/grand1/file2',
+            'folder2/child1/grand1/file3',
+            'folder2/file1',
+            ]
+
+        output = [
+            'folder2/child1/grand1/file1',
+            'folder2/child1/grand1/file2',
+            'folder2/child1/grand1/file3',
+            ]
+
+        self.execute(input, output, output_detail=True)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
