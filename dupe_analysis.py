@@ -475,7 +475,7 @@ class DupeAnalysis:
         zeroes = []
         # self.cursor.execute(f"""
         # SELECT {hash},
-        # GROUP_CONCAT(path || '|' || size)
+        # GROUP_CONCAT(path || '::' || size, '||')
         # FROM files
         # WHERE {hash} IS NOT NULL
         # AND size > 0

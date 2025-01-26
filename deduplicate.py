@@ -82,9 +82,10 @@ class DupeDir(DupeFile):
         x = {'kept': self.kept_total,
              'extra': self.extra_total,
              'count': self.count_total,
-             'keepable': self.get_first_keepable(),
-             'size': self.size,
+             # 'keepable': self.get_first_keepable(),
+             # 'size': self.size,
              'is_deleted': self.is_deleted,
+             'is_kept': self.is_kept,
              }
         return f"DupeDir({self.path}: {x})"
 
@@ -92,6 +93,9 @@ class DupeDir(DupeFile):
         return (self.has_no_extras() and
                 self.has_no_dupedirs() and
                 self.has_no_dupefiles())
+
+    def is_kept(self):
+        return self.is_kept
 
     def has_no_extras(self):
         return (not(self.has_nondupe_files()) and
@@ -230,6 +234,7 @@ class DupeDir(DupeFile):
                 return keepable_dupes
             else:
                 return set([self])
+        return set()
 
 
     @staticmethod
@@ -319,7 +324,7 @@ class DupeDir(DupeFile):
                 checked.add(ddp)
                 dd = dwd[ddp]
                 # print(f'check_largest(): dd2={dd.path}')
-                if not dd.is_empty():
+                if not dd.is_empty() and not dd.is_kept:
                     # print(f'check_largest(): dd3={dd.count} > {largest.count}')
                     if dd.count + dd.extra > largest.count + largest.extra:
                         # print(f'check_largest(): dd4={ddp}')
@@ -365,24 +370,26 @@ class DupeDir(DupeFile):
         deletes = set()
         size = 0
         # print('keep()', self.path)
-        for dupe in self.file_dupes:
-            ks, ds = dupe.keep(dwd)
-            keeps.update(ks)
-            deletes.update(ds)
-            for k in ks:
-                if k.parent in dwd:
-                    dd = dwd[k.parent]
-                    dd.increment_dupes(k, dwd)
-            for d in ds:
-                # print(d.path)
-                # update who this is deleted by
-                delete_lookup[d.path] = self.path
-                # update dir counts
-                if d.parent in dwd:
-                    dd = dwd[d.parent]
-                    dd.decrement_dupes(d, dwd)
-                size += d.size
+        if not self.is_kept:
+            for dupe in self.file_dupes:
+                ks, ds = dupe.keep(dwd)
+                keeps.update(ks)
+                deletes.update(ds)
+                for k in ks:
+                    if k.parent in dwd:
+                        dd = dwd[k.parent]
+                        dd.increment_dupes(k, dwd)
+                for d in ds:
+                    # print(d.path)
+                    # update who this is deleted by
+                    delete_lookup[d.path] = self.path
+                    # update dir counts
+                    if d.parent in dwd:
+                        dd = dwd[d.parent]
+                        dd.decrement_dupes(d, dwd)
+                    size += d.size
 
+        self.is_kept = True
         if len(keeps) > 0:
             # print('keep(): found')
             accum[self.path] = keeps, deletes, size
@@ -391,7 +398,7 @@ class DupeDir(DupeFile):
             #       pformat(deletes))
             return (self.path, keeps, deletes)
         else:
-            print('keep(): none found')
+            # print('keep(): none found')
             # move on to subdirs if empty
             dd = DupeDir.calc_max(self.dupe_children, dwd, accum.keys())
             if dd:
@@ -443,6 +450,7 @@ class DupeDedupe:
             print('Analysis complete, not performing recommendation')
             return {'junk': 1}
 
+        print(f"Querying database for duplicates")
         rets = da.get_duplicates()
         hashes_full = rets['dupes']
         rev_hashes_by_size = rets['sizes']
@@ -580,34 +588,37 @@ class DupeDedupe:
         # print('analyze()', pformat(all_dupes))
 
         # do more passes until dupes are all found
-        while len(remaining_dupes) > 0:
-            print(f'\tRemaining dupes to process: {len(remaining_dupes)}')
-            d = DupeDir.calc_max(start_list, dirs_w_dupes, final_output.keys())
-            if not d:
-                new_dwd_depth = defaultdict(list)
-                # create new depth lookup
-                for df in remaining_dupes:
-                    new_dwd_depth[df.depth - 1].append(dirs_w_dupes[df.parent])
+        with tqdm(total=len(remaining_dupes), unit='file',
+                  unit_scale=True,
+                  ncols=80, desc=f"\tRemaining dupes to process") as pbar:
+            while len(remaining_dupes) > 0:
+                d = DupeDir.calc_max(start_list, dirs_w_dupes, final_output.keys())
+                if not d:
+                    new_dwd_depth = defaultdict(list)
+                    # create new depth lookup
+                    for df in remaining_dupes:
+                        new_dwd_depth[df.depth - 1].append(dirs_w_dupes[df.parent])
 
-                # print('new_dwd_depth', pformat(new_dwd_depth))
-                ordered_keys = sorted(new_dwd_depth.keys())
-                if ordered_keys:
-                    for key in ordered_keys:
-                        start_list = new_dwd_depth[key]
-                        # print('start_list', pformat(start_list))
-                        d = DupeDir.calc_max(start_list, dirs_w_dupes, final_output.keys())
-                        if d:
-                            break
-                # print('calc', d)
-            if not d:
-                break
+                    # print('new_dwd_depth', pformat(new_dwd_depth))
+                    ordered_keys = sorted(new_dwd_depth.keys())
+                    if ordered_keys:
+                        for key in ordered_keys:
+                            start_list = new_dwd_depth[key]
+                            # print('start_list', pformat(start_list))
+                            d = DupeDir.calc_max(start_list, dirs_w_dupes, final_output.keys())
+                            if d:
+                                break
+                    # print('calc', d)
+                if not d:
+                    break
 
 
-            kept, kepts, dels = d.keep(final_output, delete_lookup, dirs_w_dupes)
-            reviewed.update(kepts)
-            reviewed.update(dels)
-            # print('pass ', debug_count)
-            remaining_dupes = all_dupes - reviewed
+                kept, kepts, dels = d.keep(final_output, delete_lookup, dirs_w_dupes)
+                reviewed.update(kepts)
+                reviewed.update(dels)
+                # print('pass ', debug_count)
+                pbar.update(len(kepts) + len(dels))
+                remaining_dupes = all_dupes - reviewed
 
         if remaining_dupes:
             print(f'Remaining dupes:\n{pformat(remaining_dupes)}')
@@ -666,7 +677,7 @@ class DupeDedupe:
                 print(f"-------------------------------")
                 print(f"Results")
                 print(f"-------------------------------")
-                print('Writing out report to dupe_list.csv')
+                print(f'Writing out report to {csvfile}')
                 with open('dupe_list.csv', 'w', newline='') as csvfile:
                     csvwriter = csv.writer(csvfile)
                     csvwriter.writerow(['to_delete', 'keep_dir', 'keeper',
