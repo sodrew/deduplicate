@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import platform
 import argparse
 import sys
 import csv
@@ -72,6 +73,7 @@ class DupeDir(DupeFile):
         self.is_full_dupe = False
         self.dupe_children = set()
         self.dd_dupes = set()
+        self.fs_root = DupeDir.fs_root()
         # self.is_superset = False
         self.manual = True
         # self.is_root = False
@@ -258,6 +260,13 @@ class DupeDir(DupeFile):
         return largest_substring
 
     @staticmethod
+    def fs_root():
+        if platform.system() == "Windows":
+            return 'C:\\'
+        else:
+            return '/'
+
+    @staticmethod
     def calc_max(dupedir_list, dwd, past_kept=None):
         # need to select the parent directory with highest count.
         # weighted by past choices, which means the highest kept.
@@ -349,7 +358,8 @@ class DupeDir(DupeFile):
         self.check_delete()
         next_parent = self.parent
         # sometimes we need to skip dirs
-        while next_parent != '/':
+
+        while next_parent != self.fs_root:
             if next_parent in dwd:
                 dd = dwd[next_parent]
                 dd.decrement_dupes(df, dwd)
@@ -677,7 +687,7 @@ class DupeDedupe:
                 print(f"-------------------------------")
                 print(f"Results")
                 print(f"-------------------------------")
-                print(f'Writing out report to {csvfile}')
+                print(f'Writing out report to dupe_list.csv')
                 with open('dupe_list.csv', 'w', newline='') as csvfile:
                     csvwriter = csv.writer(csvfile)
                     csvwriter.writerow(['to_delete', 'keep_dir', 'keeper',

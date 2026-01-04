@@ -1,3 +1,4 @@
+import platform
 import hashlib
 import os
 import sqlite3
@@ -5,6 +6,7 @@ import itertools
 import fnmatch
 import re
 import subprocess
+import shutil
 from tqdm import tqdm
 from pprint import pprint, pformat
 from dupe_utils import ProcessTimer
@@ -243,6 +245,12 @@ class DupeAnalysis:
         print(f"\tTotal Analysis Time: {timer.elapsed_readable()}")
 
     def _get_total_size(self):
+        if platform.system() == "Windows":
+            return self._get_total_size_windows()
+        else:
+            return self._get_total_size_linux()
+
+    def _get_total_size_linux(self):
         total_size = 0
         for path in self.paths:
             print(f'\tCalculating total size of directory: {path}')
@@ -256,6 +264,58 @@ class DupeAnalysis:
                 if output:
                     output = output.split()[0]
                     total_size += int(output)
+        return total_size
+
+    def _get_total_size_windows(self):
+        total_size = 0
+
+        du_path = shutil.which("du.exe") or shutil.which("du")
+        if not du_path:
+            raise RuntimeError("Sysinternals du.exe not found in PATH")
+
+        size_line_re = re.compile(r"^Size\s*:", re.IGNORECASE)
+
+        for path in self.paths:
+            print(f'\tCalculating total size of directory: {path}')
+
+            proc = subprocess.Popen(
+                [du_path, path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                encoding="mbcs",      # ✅ Windows ANSI (cp1252 on French systems)
+                errors="replace"      # ✅ never crash on bad chars
+            )
+
+            try:
+                stdout, stderr = proc.communicate(timeout=120)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                stdout, stderr = proc.communicate()
+                raise RuntimeError(f"du.exe timed out on: {path}")
+
+            if not stdout:
+                raise RuntimeError(f"No output from du.exe for path: {path}")
+
+            found = False
+            for line in stdout.splitlines():
+                line = line.strip()
+
+                # Match the "Size:" line regardless of localization artifacts
+                if size_line_re.match(line):
+                    # Extract digits only (locale-proof)
+                    digits = "".join(ch for ch in line if ch.isdigit())
+                    if not digits:
+                        raise RuntimeError(f"Failed to parse size from line: {line}")
+
+                    total_size += int(digits)
+                    found = True
+                    break
+
+            if not found:
+                raise RuntimeError(
+                    f"Could not find Size line in du.exe output for {path}:\n{stdout}"
+                )
+
         return total_size
 
     def _insert_file(self, path, depth, dirpath, name, size):
